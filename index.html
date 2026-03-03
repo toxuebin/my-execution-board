@@ -57,10 +57,26 @@
       Activity, Globe, ExternalLink, List, UserPlus2, PieChart, Eye, EyeOff, Cloud, Key
     } = LucideIcons;
 
+    // --- 核心修改区：直接固化你的专属配置 ---
+    const userDefaultConfig = {
+      apiKey: "AIzaSyD7zuS6Ntz0KMWR9-By7frlKfzmxTUwX7s",
+      authDomain: "rizers-5d385.firebaseapp.com",
+      projectId: "rizers-5d385",
+      storageBucket: "rizers-5d385.firebasestorage.app",
+      messagingSenderId: "82696904275",
+      appId: "1:82696904275:web:2e390842674a9e0afa30a6",
+      measurementId: "G-5QWRNPHNPY"
+    };
+    const defaultSyncKey = "Qianxuebin20120903";
+
     let storedConfig = null;
-    try { storedConfig = JSON.parse(localStorage.getItem('customFirebaseConfig')); } catch(e){}
+    try { 
+      let parsed = JSON.parse(localStorage.getItem('customFirebaseConfig')); 
+      if (parsed && parsed.apiKey) storedConfig = parsed;
+    } catch(e){}
+    
     const canvasConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
-    const firebaseConfig = canvasConfig || storedConfig || {};
+    const firebaseConfig = canvasConfig || storedConfig || userDefaultConfig;
     
     let firebaseApp, auth, db, appId, isCanvasEnv;
     if (Object.keys(firebaseConfig).length > 0 && firebaseConfig.apiKey) {
@@ -174,25 +190,39 @@
       const queryTimeoutRef = useRef(null);
 
       const [showSettingsModal, setShowSettingsModal] = useState(false);
-      const [customConfigInput, setCustomConfigInput] = useState(() => localStorage.getItem('customFirebaseConfig') || '');
-      const [syncKeyInput, setSyncKeyInput] = useState(() => localStorage.getItem('customSyncKey') || '');
+      const [customConfigInput, setCustomConfigInput] = useState(() => {
+          let st = localStorage.getItem('customFirebaseConfig');
+          return st ? st : JSON.stringify(userDefaultConfig, null, 2);
+      });
+      const [syncKeyInput, setSyncKeyInput] = useState(() => localStorage.getItem('customSyncKey') || defaultSyncKey);
       const [syncDocId, setSyncDocId] = useState(null);
 
       const handleSaveConfig = () => {
          try {
              if (customConfigInput.trim()) {
-                 JSON.parse(customConfigInput); 
-                 localStorage.setItem('customFirebaseConfig', customConfigInput);
+                 let parsedConfig;
+                 try {
+                     parsedConfig = JSON.parse(customConfigInput); 
+                 } catch (err) {
+                     let cleanedInput = customConfigInput.replace(/(const|let|var)\s+firebaseConfig\s*=\s*/, '').replace(/;$/, '').trim();
+                     let jsonStr = cleanedInput.replace(/([{,]\s*)([a-zA-Z0-9_]+)\s*:/g, '$1"$2":').replace(/'/g, '"').replace(/,\s*}/g, '}');
+                     try { parsedConfig = JSON.parse(jsonStr); } 
+                     catch (e2) { parsedConfig = new Function('return ' + cleanedInput)(); }
+                 }
+                 if (!parsedConfig || !parsedConfig.apiKey) throw new Error("无效配置");
+                 localStorage.setItem('customFirebaseConfig', JSON.stringify(parsedConfig));
              } else {
                  localStorage.removeItem('customFirebaseConfig');
              }
-             if (syncKeyInput.trim()) localStorage.setItem('customSyncKey', syncKeyInput.trim());
-             else localStorage.setItem('customSyncKey', 'default_user_dashboard');
              
-             alert('配置已保存，即将刷新页面生效！\n请确保您的Firebase已开启"匿名登录(Anonymous)"和"Firestore数据库"。');
+             if (syncKeyInput.trim()) localStorage.setItem('customSyncKey', syncKeyInput.trim());
+             else localStorage.setItem('customSyncKey', defaultSyncKey);
+             
+             alert('配置已保存，即将刷新页面生效！');
              window.location.reload();
          } catch(e) {
-             alert('配置格式错误，必须是有效的JSON格式！\n请检查是否多出了不必要的字符。');
+             console.error("解析配置失败", e);
+             alert('配置提取失败！请检查代码格式。');
          }
       };
 
@@ -343,9 +373,9 @@
 
       useEffect(() => { setCurrentMotto(MOTTO_LIST[Math.floor(Math.random() * MOTTO_LIST.length)]); const t = setInterval(() => setCurrentTime(new Date()), 1000); return () => clearInterval(t); }, []);
 
-      // 核心鉴权：增加 4 秒防卡死保护机制
+      // 核心鉴权：增加防卡死保护机制
       useEffect(() => {
-        const fallbackTimer = setTimeout(() => { setLoading(false); }, 4000); // 强制 4 秒后放行
+        const fallbackTimer = setTimeout(() => { setLoading(false); }, 4000); 
         if (!auth) { setLoading(false); return; }
         
         const initAuth = async () => {
@@ -364,7 +394,7 @@
         return () => { unsubscribeAuth(); clearTimeout(fallbackTimer); };
       }, []);
 
-      // 生成 SHA-256 加密的 Doc ID，含环境兼容降级保护
+      // 生成 SHA-256 加密的 Doc ID
       useEffect(() => {
         if (!user) return;
         const initDocId = async () => {
@@ -372,7 +402,7 @@
               if (isCanvasEnv) {
                  setSyncDocId(user.uid);
               } else {
-                 const key = localStorage.getItem('customSyncKey') || 'default_user_dashboard';
+                 const key = localStorage.getItem('customSyncKey') || defaultSyncKey;
                  if (window.crypto && window.crypto.subtle) {
                      const msgBuffer = new TextEncoder().encode(key);                    
                      const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
@@ -380,13 +410,12 @@
                      const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
                      setSyncDocId(hashHex);
                  } else {
-                     // 降级处理：如果没有 HTTPS 环境导致 crypto 失效，使用安全的 Base64 编码
                      setSyncDocId('doc_' + btoa(encodeURIComponent(key)).replace(/[^a-zA-Z0-9]/g, '').substring(0, 30));
                  }
               }
           } catch (err) {
               console.warn("Sync ID init error", err);
-              setSyncDocId('fallback_dashboard_id'); // 绝对兜底
+              setSyncDocId('fallback_dashboard_id');
           }
         };
         initDocId();
@@ -1134,43 +1163,32 @@
                 
                 <div className="overflow-y-auto flex-1 pr-2 space-y-4">
                     <div className={`p-4 rounded-xl text-sm ${isDarkMode ? 'bg-blue-900/20 text-blue-300' : 'bg-blue-50 text-blue-700'}`}>
-                        <p className="font-bold mb-1">为什么跨设备无法同步？</p>
-                        <p className="opacity-90">部署在 Github/Netlify 时，默认仅保存在浏览器本地。若要跨设备同步，只需配置您自己的免费云数据库即可。</p>
+                        <p className="font-bold mb-1">您的专属版本已激活 🚀</p>
+                        <p className="opacity-90">当前看板已经在底层代码中硬编码了您个人的 Firebase 数据库。您无需再做任何配置，直接开始使用即可自动实现全端云同步！</p>
                     </div>
 
                     <div>
-                        <label className={`block text-xs font-bold mb-2 ${theme.textSub}`}>Firebase Config (JSON 格式)</label>
+                        <label className={`block text-xs font-bold mb-2 ${theme.textSub}`}>Firebase Config (底层已内置，仅供查看)</label>
                         <textarea 
                             value={customConfigInput} 
                             onChange={e => setCustomConfigInput(e.target.value)}
-                            placeholder='{"apiKey": "xxx", "authDomain": "xxx", "projectId": "xxx", ...}'
                             className={`w-full h-24 p-3 rounded-xl border outline-none text-xs font-mono resize-none ${theme.inputBg} ${theme.textMain}`}
                         />
                     </div>
                     
                     <div>
-                        <label className={`block text-xs font-bold mb-2 flex items-center gap-1 ${theme.textSub}`}><Key className="w-3.5 h-3.5"/> 跨设备同步密钥 (Sync Key)</label>
+                        <label className={`block text-xs font-bold mb-2 flex items-center gap-1 ${theme.textSub}`}><Key className="w-3.5 h-3.5"/> 跨设备同步密钥 (已内置为你设置的默认密码)</label>
                         <input 
                             type="text"
                             value={syncKeyInput} 
                             onChange={e => setSyncKeyInput(e.target.value)}
-                            placeholder='设置一个复杂的组合，所有设备填一样的密钥即可互通'
                             className={`w-full p-3 rounded-xl border outline-none text-sm ${theme.inputBg} ${theme.textMain}`}
                         />
-                    </div>
-                    
-                    <div className={`text-xs space-y-1.5 opacity-80 ${theme.textSub}`}>
-                        <p className="font-bold text-red-500">新手免费配置指南：</p>
-                        <p>1. 注册访问 <a href="https://console.firebase.google.com/" target="_blank" className="underline text-blue-500">Firebase 控制台</a>，创建新项目。</p>
-                        <p>2. 添加一个 Web 应用，复制生成的 <code>firebaseConfig</code> (括号内的纯 JSON 代码) 粘贴到上方。</p>
-                        <p>3. 开启左侧菜单 <b>Authentication</b> 中的 <b>Anonymous (匿名登录)</b>。</p>
-                        <p>4. 创建 <b>Firestore Database</b>，在 Rules(规则) 选项卡中修改为：<code className="bg-black/10 px-1 rounded break-all">allow read, write: if true;</code> 后发布。</p>
                     </div>
                 </div>
 
                 <div className="mt-6 pt-4 border-t border-gray-200 dark:border-[#213743] flex gap-3">
-                   <button onClick={() => {setCustomConfigInput(''); setSyncKeyInput('');}} className={`flex-1 py-3 rounded-xl font-bold text-sm ${isDarkMode ? 'bg-[#213743] text-white' : 'bg-gray-100 text-gray-700'}`}>清空</button>
-                   <button onClick={handleSaveConfig} className="flex-[2] py-3 bg-blue-600 text-white font-bold rounded-xl shadow-md">保存并重启同步</button>
+                   <button onClick={handleSaveConfig} className="flex-[2] py-3 bg-blue-600 text-white font-bold rounded-xl shadow-md">更新自定义修改 (非必要)</button>
                 </div>
               </div>
             </div>
