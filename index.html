@@ -1,0 +1,1311 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="referrer" content="no-referrer">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>我的执行看板 Pro</title>
+  
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.23.10/babel.min.js"></script>
+  <script async src="https://cdn.jsdelivr.net/npm/es-module-shims@1.8.0/dist/es-module-shims.js"></script>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "react": "https://esm.sh/react@18.2.0",
+        "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+        "firebase/app": "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js",
+        "firebase/auth": "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js",
+        "firebase/firestore": "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js",
+        "lucide-react": "https://esm.sh/lucide-react@0.344.0?bundle&external=react"
+      }
+    }
+  </script>
+  
+  <style>
+    body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", sans-serif; -webkit-font-smoothing: antialiased; }
+    ::-webkit-scrollbar { display: none; }
+    .glass-panel { backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
+    
+    .ticker-scroll::-webkit-scrollbar { display: none; }
+    .ticker-scroll { -ms-overflow-style: none; scrollbar-width: none; }
+    
+    @keyframes scrollY { 0% { transform: translateY(0); } 100% { transform: translateY(-50%); } }
+    .news-ticker { animation: scrollY 40s linear infinite; }
+    .news-ticker:hover { animation-play-state: paused; }
+    
+    .mask-image-linear-y { -webkit-mask-image: linear-gradient(to bottom, transparent, black 10%, black 90%, transparent); }
+
+    input[type=number]::-webkit-inner-spin-button, 
+    input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel" data-type="module">
+    import React, { useState, useEffect, useMemo, useRef } from 'react';
+    import { createRoot } from 'react-dom/client';
+    import { initializeApp } from 'firebase/app';
+    import { getAuth, onAuthStateChanged, signInAnonymously, signInWithCustomToken } from 'firebase/auth';
+    import { getFirestore, doc, setDoc, onSnapshot } from 'firebase/firestore';
+    import * as LucideIcons from 'lucide-react';
+    
+    const {
+      CheckCircle2, Circle, Heart, Mic, Video, UserPlus, Calculator, X, ChevronDown, ChevronLeft, ChevronRight, Target,
+      Zap, RefreshCw, Flame, Sun, Moon, Sparkles, Book, FileSearch, Trophy, Coffee, Gift,
+      CloudRain, Wind, Droplets, ThermometerSun, Palmtree, Snowflake, Leaf, Flower2,
+      Lock, Unlock, Plus, Minus, History, ArrowLeft, Phone, Calendar, Trash2, Edit2, AlertCircle, Star, BellRing, DownloadCloud, Cake,
+      Wallet, Receipt, TrendingUp, TrendingDown, Share, Settings, Wand2, Film, PlayCircle,
+      Activity, Globe, ExternalLink, List, UserPlus2, PieChart, Eye, EyeOff
+    } = LucideIcons;
+
+    const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+    let firebaseApp, auth, db, appId;
+    if (Object.keys(firebaseConfig).length > 0 && firebaseConfig.apiKey) {
+      try { firebaseApp = initializeApp(firebaseConfig); auth = getAuth(firebaseApp); db = getFirestore(firebaseApp); appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id'; } 
+      catch (e) { console.warn("Firebase Init Failed", e); }
+    }
+
+    const INITIAL_ANNUAL_TARGET = 123; 
+    
+    const FAMILY_BIRTHDAYS = [
+      { name: "母亲", month: 5, day: 16, type: 'birthday' }, { name: "父亲", month: 6, day: 14, type: 'birthday' },
+      { name: "老婆", month: 8, day: 31, type: 'birthday' }, { name: "儿子", month: 9, day: 3, type: 'birthday' },
+      { name: "女儿", month: 4, day: 23, type: 'birthday' }, { name: "我自己", month: 11, day: 16, type: 'birthday' }
+    ];
+
+    const HOLIDAYS = [
+      { name: "元旦", month: 1, day: 1, type: 'holiday' }, { name: "春节", month: 2, day: 17, type: 'holiday' }, 
+      { name: "妇女节", month: 3, day: 8, type: 'holiday' }, { name: "劳动节", month: 5, day: 1, type: 'holiday' },
+      { name: "国庆节", month: 10, day: 1, type: 'holiday' }, { name: "除夕", month: 2, day: 16, type: 'holiday' }
+    ];
+
+    const MOTTO_LIST = [
+      "结果不会说谎，数据是唯一的解药。", "每一步都算数，今天的汗水是明天的复利。",
+      "即便世界再嘈杂，也要守住你内心的执行节奏。", "爱自己最好的方式，是让自己变得优秀且富有。",
+      "所有的伟大，都源于死磕的坚持。"
+    ];
+
+    const MONTH_LOGOS = {
+      3: { icon: Leaf, color: "text-emerald-500", bg: "bg-emerald-500/10", title: "春生", main: "3月 · 蛰伏与破局", sub: "万物复苏，正是拔节生长时间" },
+      4: { icon: CloudRain, color: "text-blue-400", bg: "bg-blue-400/10", title: "润物", main: "4月 · 扎根与向日", sub: "向下扎根，向上野蛮生长" },
+      5: { icon: Flower2, color: "text-pink-500", bg: "bg-pink-500/10", title: "繁花", main: "5月 · 繁花与盛放", sub: "热烈且自由，做自己的光" },
+      6: { icon: Sun, color: "text-orange-500", bg: "bg-orange-500/10", title: "骄阳", main: "6月 · 烈日与淬炼", sub: "百炼成钢，不负炽热野心" },
+      7: { icon: ThermometerSun, color: "text-red-500", bg: "bg-red-500/10", title: "盛夏", main: "7月 · 极热与坚守", sub: "耐得住酷暑，方能等来清凉" },
+      8: { icon: Palmtree, color: "text-teal-500", bg: "bg-teal-500/10", title: "葱茏", main: "8月 · 狂热与沉淀", sub: "越是喧嚣，越要内求平静" },
+      9: { icon: Wind, color: "text-amber-500", bg: "bg-amber-500/10", title: "秋风", main: "9月 · 乘风与破浪", sub: "长风破浪会有时，直挂云帆" },
+      10: { icon: Moon, color: "text-indigo-400", bg: "bg-indigo-400/10", title: "明月", main: "10月 · 澄明与收获", sub: "行至水穷处，坐看云起时" },
+      11: { icon: Snowflake, color: "text-sky-300", bg: "bg-sky-300/10", title: "初雪", main: "11月 · 凝霜与蓄锐", sub: "沉下心来，厚积才能薄发" },
+      12: { icon: Gift, color: "text-rose-500", bg: "bg-rose-500/10", title: "岁盈", main: "12月 · 圆满与感恩", sub: "岁末将至，敬颂冬绥" }
+    };
+
+    const FIXED_WEEKLY_TASKS = [
+      { text: "周一写清本周3个关键目标", category: "work", critical: true }, { text: "完成2-3个高价值动作", category: "work", critical: true },
+      { text: "周五做一次周复盘", category: "work" }, { text: "运动2次 (每次30-45分钟)", category: "life" },
+      { text: "安排1次高质量家庭时间", category: "life", critical: true }, { text: "阅读1-2次 (累计≥60分钟)", category: "learning" },
+      { text: "投资学习1次 (30-60分钟)", category: "learning" }, { text: "检查仓位是否偏离计划", category: "investment" }
+    ];
+
+    const FULL_YEAR_PLAN = {
+      3: { keyword: "定盘 + 建系统 + 稳节奏", weeks: [
+        { title: "第1周：定盘与建系统", tasks: [{text:"写下年度目标100万", cat:"work", crit:true},{text:"建立月周日模板", cat:"work", crit:true},{text:"梳理客户ABC级", cat:"work"},{text:"建立年度书单", cat:"learning", crit:true}] },
+        { title: "第2周：拉稳节奏", tasks: [{text:"明确本月高价值动作", cat:"work", crit:true},{text:"跟进A类客户", cat:"work"},{text:"联系第1位高手交流", cat:"learning"}] },
+        { title: "第3周：开始产出", tasks: [{text:"推进项目进入下阶段", cat:"work", crit:true},{text:"完成第1位高手交流", cat:"learning", crit:true}] },
+        { title: "第4周：收口复盘", tasks: [{text:"全月大复盘", cat:"work", crit:true},{text:"定稿亲子游方案", cat:"life"}] }
+      ]},
+      ...Array.from({length: 9}, (_, i) => i + 4).reduce((acc, m) => ({...acc, [m]: { keyword: "年度持续执行", weeks: Array(4).fill({ title: `计划执行周`, tasks: [] }) }}), {})
+    };
+
+    const App = () => {
+      const [isDarkMode, setIsDarkMode] = useState(() => new Date().getHours() >= 19 || new Date().getHours() < 7);
+      const [currentTime, setCurrentTime] = useState(new Date());
+      const [user, setUser] = useState(null);
+      const [loading, setLoading] = useState(false);
+      const [currentMotto, setCurrentMotto] = useState("");
+
+      const systemMonth = currentTime.getMonth() + 1;
+      const systemYear = currentTime.getFullYear();
+      const [viewMonth, setViewMonth] = useState(systemMonth);
+      const [activeWeek, setActiveWeek] = useState(0);
+
+      const [usdToCnyRate, setUsdToCnyRate] = useState(7.20);
+
+      // 核心数据状态
+      const [allMonthData, setAllMonthData] = useState({});
+      const [tasksCompleted, setTasksCompleted] = useState({});
+      const [clients, setClients] = useState([]);
+      const [investments, setInvestments] = useState({ A: { initialCapital: 1000000, records: {} }, US: { initialCapital: 100000, records: {} } });
+      const [expenses, setExpenses] = useState({}); 
+      const [portfolio, setPortfolio] = useState([]); 
+      const [showPortfolioDetails, setShowPortfolioDetails] = useState(false); // 控制持仓显示
+      
+      const [editAuthTime, setEditAuthTime] = useState(0);
+      const [showDataAuthModal, setShowDataAuthModal] = useState(false);
+      const [dataAuthPwd, setDataAuthPwd] = useState('');
+      const [pendingAction, setPendingAction] = useState(null);
+      const [authErrorShake, setAuthErrorShake] = useState(false);
+
+      const getTodayDateString = () => {
+        const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      };
+
+      const [showClientModal, setShowClientModal] = useState(false);
+      const [crmTab, setCrmTab] = useState('list'); 
+      const [showCalc, setShowCalc] = useState(false);
+      const [calcInput, setCalcInput] = useState('0');
+      
+      const [stockData, setStockData] = useState([]);
+      const [stockError, setStockError] = useState(false);
+      const [showPortfolioModal, setShowPortfolioModal] = useState(false);
+      const [newPosition, setNewPosition] = useState({ code: '', quantity: '', costPrice: '' });
+      const [newsList, setNewsList] = useState([]);
+
+      const [showExpenseModal, setShowExpenseModal] = useState(false);
+      const [expenseType, setExpenseType] = useState('out');
+      const [newExpenseText, setNewExpenseText] = useState('');
+      const [manualExpense, setManualExpense] = useState({ amount: '', desc: '' });
+      const [investMode, setInvestMode] = useState('amount'); 
+      const [investTab, setInvestTab] = useState('daily'); 
+      const [investMarket, setInvestMarket] = useState('A');
+      const [stageDates, setStageDates] = useState({ start: getTodayDateString(), end: getTodayDateString() });
+      const [investModal, setInvestModal] = useState({ show: false, date: '', val: '' });
+      const [capitalModal, setCapitalModal] = useState({ show: false, val: '' });
+
+      const [isClientAuth, setIsClientAuth] = useState(false);
+      const [clientPwdInput, setClientPwdInput] = useState('');
+      const [newClient, setNewClient] = useState({ date: getTodayDateString(), name: '', phone: '', level: 'B', remindDays: '0' });
+      const [phoneError, setPhoneError] = useState('');
+      const [phoneLocation, setPhoneLocation] = useState('');
+      const [isLocating, setIsLocating] = useState(false); 
+      const [clientFormError, setClientFormError] = useState('');
+      const [pwdErrorShake, setPwdErrorShake] = useState(false);
+      const [activeClientForFollowUp, setActiveClientForFollowUp] = useState(null);
+      const [newFollowUp, setNewFollowUp] = useState('');
+      const [newFollowUpRemind, setNewFollowUpRemind] = useState('0');
+      const [editingFollowUpId, setEditingFollowUpId] = useState(null);
+      const [editingFollowUpText, setEditingFollowUpText] = useState('');
+      const queryTimeoutRef = useRef(null);
+
+      // 计算器功能
+      const handleCalcBtn = (val) => {
+         if(val === 'C') { setCalcInput('0'); }
+         else if(val === 'DEL') { setCalcInput(prev => prev.length > 1 ? prev.slice(0, -1) : '0'); }
+         else if(val === '=') { try { setCalcInput(eval(calcInput.replace('×','*').replace('÷','/')).toString()); } catch(e) { setCalcInput('Error'); setTimeout(()=>setCalcInput('0'), 1000); } } 
+         else { setCalcInput(prev => (prev === '0' || prev === 'Error') ? val : prev + val); }
+      };
+
+      useEffect(() => {
+        fetch('https://api.exchangerate-api.com/v4/latest/USD').then(res => res.json())
+          .then(data => { if(data && data.rates && data.rates.CNY) setUsdToCnyRate(data.rates.CNY); })
+          .catch(() => console.log('使用默认汇率 7.2'));
+      }, []);
+
+      // 腾讯财经股票接口
+      useEffect(() => {
+         const fetchStocks = () => {
+             const activeCodes = [...new Set([...portfolio.map(p => p.code), 'sh000001', 'usDJI'])];
+             const script = document.createElement('script');
+             script.src = `https://qt.gtimg.cn/q=${activeCodes.join(',')}&_t=${Date.now()}`;
+             script.onload = () => {
+                 const res = [];
+                 activeCodes.forEach(code => {
+                     const varName = `v_${code}`;
+                     if(window[varName]) {
+                         const data = window[varName].split('~');
+                         if(data.length > 30) {
+                             res.push({ code, name: data[1], price: data[3], change: data[31], changePct: data[32] });
+                         }
+                     }
+                 });
+                 if (res.length > 0) { setStockData(res); setStockError(false); }
+                 if (document.head.contains(script)) document.head.removeChild(script);
+             };
+             script.onerror = () => {
+                 setStockError(true);
+                 if (document.head.contains(script)) document.head.removeChild(script);
+             };
+             document.head.appendChild(script);
+         };
+         fetchStocks();
+         const interval = setInterval(fetchStocks, 6000); 
+         return () => clearInterval(interval);
+      }, [portfolio]);
+
+      // 财经新闻
+      useEffect(() => {
+         const fetchNews = () => {
+             const cbName = 'sinaNewsCb_' + Date.now();
+             window[cbName] = (data) => {
+                 if(data && data.result && data.result.data) {
+                     setNewsList(data.result.data.slice(0, 6)); 
+                 }
+                 delete window[cbName];
+             };
+             const script = document.createElement('script');
+             script.src = `https://feed.mix.sina.com.cn/api/roll/get?pageid=153&lid=2509&k=&num=10&page=1&callback=${cbName}&_t=${Date.now()}`;
+             document.body.appendChild(script);
+             setTimeout(() => { if(document.body.contains(script)) document.body.removeChild(script); }, 3000);
+         };
+         fetchNews();
+         const interval = setInterval(fetchNews, 60000);
+         return () => clearInterval(interval);
+      }, []);
+
+      const upcomingEvents = useMemo(() => {
+        const today = currentTime;
+        const allEvents = [...FAMILY_BIRTHDAYS, ...HOLIDAYS];
+        const withDays = allEvents.map(e => {
+            let eventDate = new Date(today.getFullYear(), e.month - 1, e.day);
+            if (eventDate < new Date(today.getFullYear(), today.getMonth(), today.getDate())) { eventDate = new Date(today.getFullYear() + 1, e.month - 1, e.day); }
+            const daysAway = Math.ceil((eventDate - today) / (1000 * 60 * 60 * 24));
+            return { ...e, daysAway };
+        }).sort((a,b) => a.daysAway - b.daysAway);
+        return withDays.slice(0, 3); 
+      }, [currentTime.getDate()]);
+
+      const [activeEventIdx, setActiveEventIdx] = useState(0);
+      useEffect(() => {
+        if (!upcomingEvents || upcomingEvents.length <= 1) return;
+        const timer = setInterval(() => { setActiveEventIdx(prev => (prev + 1) % upcomingEvents.length); }, 10000);
+        return () => clearInterval(timer);
+      }, [upcomingEvents]);
+
+      const getXueqiuUrl = (code) => {
+         if (code.startsWith('us')) return `https://xueqiu.com/S/${code.slice(2).toUpperCase()}`;
+         return `https://xueqiu.com/S/${code.toUpperCase()}`;
+      };
+
+      const queryPhoneLocationReal = async (phone) => {
+        if(phone.length !== 11) return;
+        setIsLocating(true); setPhoneLocation('查询中...');
+        try {
+           const res = await fetch(`https://api.vvhan.com/api/phone?tel=${phone}`);
+           const data = await res.json();
+           if (data.success && data.info) setPhoneLocation(`${data.info.prov} ${data.info.city}`.trim());
+           else setPhoneLocation('未知号码');
+        } catch(e) { setPhoneLocation('查询失败'); }
+        finally { setIsLocating(false); }
+      };
+
+      const handlePhoneChange = (e) => {
+        const val = e.target.value.replace(/\D/g, '').substring(0, 11);
+        setNewClient({...newClient, phone: val});
+        setPhoneError('');
+        if (queryTimeoutRef.current) clearTimeout(queryTimeoutRef.current);
+        if(val.length === 11) queryTimeoutRef.current = setTimeout(() => queryPhoneLocationReal(val), 600);
+        else setPhoneLocation('');
+      };
+
+      const handlePhoneBlur = () => {
+        if (newClient.phone && newClient.phone.length !== 11) {
+          setPhoneError('请输入11位手机号');
+        } else {
+          setPhoneError('');
+        }
+      };
+
+      useEffect(() => { setCurrentMotto(MOTTO_LIST[Math.floor(Math.random() * MOTTO_LIST.length)]); const t = setInterval(() => setCurrentTime(new Date()), 1000); return () => clearInterval(t); }, []);
+
+      useEffect(() => {
+        if (!auth) return; setLoading(true);
+        const initAuth = async () => {
+          try { 
+            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) await signInWithCustomToken(auth, __initial_auth_token);
+            else await signInAnonymously(auth); 
+          } catch (err) { setLoading(false); }
+        };
+        initAuth();
+        const unsubscribeAuth = onAuthStateChanged(auth, u => { setUser(u); if (!u) setLoading(false); });
+        return () => unsubscribeAuth();
+      }, []);
+
+      useEffect(() => {
+        if (!user || !db) return;
+        const colRef = doc(db, 'artifacts', appId || 'local', 'users', user.uid, 'dashboard', 'data_pro_v5');
+        const unsubscribeSnap = onSnapshot(colRef, (snap) => {
+          if (snap.exists()) {
+            const d = snap.data();
+            if (d.allMonthData) setAllMonthData(d.allMonthData);
+            if (d.tasksCompleted) setTasksCompleted(d.tasksCompleted);
+            if (d.clients) setClients(d.clients);
+            if (d.portfolio) setPortfolio(d.portfolio); 
+            if (d.investments) {
+                if (d.investments.A && d.investments.US) setInvestments(d.investments);
+                else setInvestments({ A: d.investments.records ? d.investments : { initialCapital: 1000000, records: {} }, US: { initialCapital: 100000, records: {} } });
+            }
+            if (d.expenses) setExpenses(d.expenses);
+          }
+          setLoading(false);
+        }, () => setLoading(false));
+        return () => unsubscribeSnap();
+      }, [user]);
+
+      const saveData = async (newData) => {
+        if (newData.tasksCompleted) setTasksCompleted(newData.tasksCompleted);
+        if (newData.allMonthData) setAllMonthData(newData.allMonthData);
+        if (newData.clients) setClients(newData.clients);
+        if (newData.investments) setInvestments(newData.investments);
+        if (newData.expenses) setExpenses(newData.expenses);
+        if (newData.portfolio) setPortfolio(newData.portfolio);
+        if (!user || !db) return; 
+        try { await setDoc(doc(db, 'artifacts', appId || 'local', 'users', user.uid, 'dashboard', 'data_pro_v5'), newData, { merge: true }); } 
+        catch (e) { console.error(e); }
+      };
+
+      const requireAuth = (actionFn) => {
+        return (...args) => {
+          if (Date.now() - editAuthTime < 20 * 60 * 1000) actionFn(...args);
+          else { setPendingAction(() => () => actionFn(...args)); setShowDataAuthModal(true); }
+        };
+      };
+
+      const handleDataAuthSubmit = () => {
+        if (dataAuthPwd === '000111') { setEditAuthTime(Date.now()); setShowDataAuthModal(false); setDataAuthPwd(''); if (pendingAction) { pendingAction(); setPendingAction(null); } } 
+        else { setDataAuthPwd(''); setAuthErrorShake(true); setTimeout(() => setAuthErrorShake(false), 500); }
+      };
+
+      const handleTaskToggle = (tid) => {
+        const isCompleted = tasksCompleted[tid];
+        const action = () => { saveData({ tasksCompleted: { ...tasksCompleted, [tid]: !isCompleted } }); };
+        if (isCompleted) requireAuth(action)(); else action(); 
+      };
+
+      const handleHabitToggle = (type, i) => {
+        const isCompleted = currentMonthData.habits[type][i];
+        const action = () => {
+          const nextHabits = { ...currentMonthData.habits };
+          nextHabits[type][i] = !isCompleted;
+          saveData({ allMonthData: { ...allMonthData, [viewMonth]: { ...currentMonthData, habits: nextHabits } } });
+        };
+        if (isCompleted) requireAuth(action)(); else action();
+      };
+
+      const handleBizStatAdd = (field) => {
+        const cur = [...(currentMonthData.bizStats[field] || [])]; cur.push(Date.now());
+        saveData({ allMonthData: { ...allMonthData, [viewMonth]: { ...currentMonthData, bizStats: { ...currentMonthData.bizStats, [field]: cur } } } });
+      };
+
+      const handleBizStatRemove = (field) => {
+        const action = () => {
+           const cur = [...(currentMonthData.bizStats[field] || [])]; if (cur.length > 0) cur.pop(); 
+           saveData({ allMonthData: { ...allMonthData, [viewMonth]: { ...currentMonthData, bizStats: { ...currentMonthData.bizStats, [field]: cur } } } });
+        };
+        requireAuth(action)();
+      };
+
+      const handleSmartParseExpense = () => {
+         const match = newExpenseText.match(/(\d+(\.\d{1,2})?)/);
+         if (match) {
+             const amount = parseFloat(match[0]);
+             let desc = newExpenseText.replace(match[0], '').trim();
+             let type = expenseType;
+             if (desc.includes('收入') || desc.includes('发工资') || desc.includes('赚') || desc.includes('进账')) type = 'in';
+             if (!desc) desc = type === 'out' ? '日常消费' : '其他收入';
+             saveExpense(amount, desc, type); setNewExpenseText('');
+         } else alert('未识别到有效金额，请手动输入');
+      };
+
+      const handleManualExpenseAdd = () => {
+         const amount = parseFloat(manualExpense.amount);
+         if(amount > 0) {
+             saveExpense(amount, manualExpense.desc || (expenseType === 'out' ? '日常消费' : '其他收入'), expenseType);
+             setManualExpense({ amount: '', desc: '' });
+         }
+      };
+
+      const saveExpense = (amount, desc, type = 'out') => {
+         const d = new Date();
+         const monthKey = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+         const newRecord = { id: Date.now().toString(), date: getTodayDateString(), amount: Number(amount), desc, type, time: `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}` };
+         const currentMonthExp = Array.isArray(expenses[monthKey]) ? expenses[monthKey] : [];
+         saveData({ expenses: { ...expenses, [monthKey]: [newRecord, ...currentMonthExp] } });
+      };
+
+      const handleDeleteExpense = (monthKey, id) => {
+         const action = () => {
+            const currentMonthExp = Array.isArray(expenses[monthKey]) ? expenses[monthKey] : [];
+            saveData({ expenses: { ...expenses, [monthKey]: currentMonthExp.filter(e => e.id !== id) } });
+         };
+         requireAuth(action)();
+      };
+
+      const getCurrentMonthExpensesTotal = (type = 'out') => {
+         const monthKey = `${systemYear}-${String(viewMonth).padStart(2,'0')}`;
+         const currentMonthExp = Array.isArray(expenses[monthKey]) ? expenses[monthKey] : [];
+         return currentMonthExp.filter(e => (e && e.type === type) || (!e.type && type === 'out')).reduce((sum, e) => sum + Number(e.amount || 0), 0).toFixed(2);
+      };
+
+      const saveInvest = () => {
+         const num = parseFloat(investModal.val);
+         const action = () => {
+            const currentMarketData = investments[investMarket] || { initialCapital: investMarket==='A'?1000000:100000, records: {} };
+            const newRecords = { ...currentMarketData.records };
+            if (!isNaN(num)) newRecords[investModal.date] = num; else if (investModal.val.toString().trim() === '') delete newRecords[investModal.date];
+            saveData({ investments: { ...investments, [investMarket]: { ...currentMarketData, records: newRecords } } });
+            setInvestModal({show:false, date:'', val:''});
+         };
+         const existing = investments[investMarket]?.records?.[investModal.date];
+         if (existing !== undefined && existing !== num) requireAuth(action)(); else action();
+      };
+
+      const saveCapital = () => {
+         const num = parseFloat(capitalModal.val);
+         const action = () => {
+            if (!isNaN(num)) {
+               const currentMarketData = investments[investMarket] || { initialCapital: investMarket==='A'?1000000:100000, records: {} };
+               saveData({ investments: { ...investments, [investMarket]: { ...currentMarketData, initialCapital: num } } });
+            }
+            setCapitalModal({ show: false, val: '' });
+         };
+         requireAuth(action)(); 
+      };
+
+      const getInvestmentTotal = (period) => {
+         let total = 0; const records = investments[investMarket]?.records || {};
+         if (period === 'monthly') { const prefix = `${systemYear}-${String(viewMonth).padStart(2,'0')}`; Object.keys(records).forEach(k => { if (k.startsWith(prefix)) total += records[k]; }); } 
+         else if (period === 'yearly') { const prefix = `${systemYear}-`; Object.keys(records).forEach(k => { if (k.startsWith(prefix)) total += records[k]; }); } 
+         else if (period === 'stage') { if (stageDates.start && stageDates.end) { Object.keys(records).forEach(k => { if (k >= stageDates.start && k <= stageDates.end) total += records[k]; }); } }
+         return total;
+      };
+
+      const generateInvestCalendar = () => {
+          const daysInMonth = new Date(systemYear, viewMonth, 0).getDate(); let weeks = []; let currentWeek = Array(5).fill(null);
+          for (let i = 1; i <= daysInMonth; i++) {
+              let d = new Date(systemYear, viewMonth - 1, i); let dayOfWeek = d.getDay();
+              if (dayOfWeek >= 1 && dayOfWeek <= 5) currentWeek[dayOfWeek - 1] = i;
+              if (dayOfWeek === 5 || i === daysInMonth) { if (currentWeek.some(d => d !== null)) weeks.push([...currentWeek]); currentWeek = Array(5).fill(null); }
+          }
+          return weeks;
+      };
+
+      const formatInvestNum = (num, isRate = false) => {
+          if (num === undefined || num === null || isNaN(num)) return '';
+          const n = Number(num);
+          if (isRate) return (n > 0 ? '+' : '') + (n * 100).toFixed(2) + '%';
+          if (n === 0) return '0.00';
+          if (Math.abs(n) >= 10000) return (n > 0 ? '+' : '') + (n / 10000).toFixed(2) + '万';
+          return (n > 0 ? '+' : '') + n.toFixed(2);
+      };
+
+      const handleAddPosition = () => {
+         const code = newPosition.code.trim().toLowerCase();
+         const qty = parseFloat(newPosition.quantity);
+         const cost = parseFloat(newPosition.costPrice);
+         if(!code || isNaN(qty) || isNaN(cost)) return alert('请填写完整的持仓信息');
+         const action = () => {
+             const newItem = { id: Date.now().toString(), market: investMarket, code, quantity: qty, costPrice: cost };
+             saveData({ portfolio: [...portfolio, newItem] });
+             setShowPortfolioModal(false);
+             setNewPosition({ code: '', quantity: '', costPrice: '' });
+         };
+         requireAuth(action)();
+      };
+
+      const handleRemovePosition = (id) => {
+         const action = () => { saveData({ portfolio: portfolio.filter(p => p.id !== id) }); };
+         requireAuth(action)();
+      };
+
+      const handleAddClient = () => {
+        if (!newClient.name || !newClient.date) { setClientFormError("必须填写「日期」和「姓名」"); return; }
+        setClientFormError(''); 
+        let nextRemindDate = null;
+        if(parseInt(newClient.remindDays) > 0) { const d = new Date(); d.setDate(d.getDate() + parseInt(newClient.remindDays)); nextRemindDate = d.getTime(); }
+        const newClientData = { id: Date.now().toString(), date: newClient.date, name: newClient.name, phone: newClient.phone, location: phoneLocation === '查询中...' || phoneLocation === '未知号码' ? '' : phoneLocation, level: newClient.level, nextRemindDate: nextRemindDate, followUps: [] };
+        saveData({ clients: [newClientData, ...clients] });
+        setNewClient({ date: getTodayDateString(), name: '', phone: '', level: 'B', remindDays: '0' }); setPhoneLocation('');
+        setCrmTab('list'); 
+      };
+
+      const handleAddFollowUp = (clientId) => {
+        if (!newFollowUp.trim()) return;
+        const now = new Date(); const dateString = `${now.getMonth() + 1}月${now.getDate()}日 ${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}`;
+        let nextRemindDate = activeClientForFollowUp ? activeClientForFollowUp.nextRemindDate : null;
+        if(parseInt(newFollowUpRemind) > 0) { const d = new Date(); d.setDate(d.getDate() + parseInt(newFollowUpRemind)); nextRemindDate = d.getTime(); }
+        const newRecord = { id: Date.now().toString(), date: dateString, text: newFollowUp };
+        const updatedClients = clients.map(c => c.id === clientId ? { ...c, nextRemindDate: nextRemindDate, followUps: [newRecord, ...(c.followUps || [])] } : c);
+        saveData({ clients: updatedClients });
+        setNewFollowUp(''); setNewFollowUpRemind('0'); setActiveClientForFollowUp(updatedClients.find(c => c.id === clientId));
+      };
+
+      const handleDeleteFollowUp = (clientId, followUpId) => {
+        const action = () => {
+          const updatedClients = clients.map(c => c.id === clientId ? { ...c, followUps: (c.followUps || []).filter(fu => fu.id !== followUpId) } : c);
+          saveData({ clients: updatedClients }); setActiveClientForFollowUp(updatedClients.find(c => c.id === clientId));
+        };
+        requireAuth(action)();
+      };
+
+      const handleSaveEditFollowUp = (clientId) => {
+        if (!editingFollowUpText.trim()) return;
+        const action = () => {
+          const updatedClients = clients.map(c => c.id === clientId ? { ...c, followUps: (c.followUps || []).map(fu => fu.id === editingFollowUpId ? { ...fu, text: editingFollowUpText } : fu) } : c);
+          saveData({ clients: updatedClients }); setEditingFollowUpId(null); setEditingFollowUpText(''); setActiveClientForFollowUp(updatedClients.find(c => c.id === clientId));
+        };
+        requireAuth(action)();
+      };
+
+      const handleClientAuth = () => {
+        if (clientPwdInput === '20120903') { setIsClientAuth(true); setClientPwdInput(''); setPwdErrorShake(false); } 
+        else { setClientPwdInput(''); setPwdErrorShake(true); setTimeout(() => setPwdErrorShake(false), 500); }
+      };
+
+      const handleExportData = () => {
+        if (clients.length === 0) { alert('暂无数据'); return; }
+        let csvContent = "客户姓名,录入日期,联系电话,归属地,客户级别,下次提醒,跟进记录数,详细跟进记录\n";
+        clients.forEach(c => {
+          const remindText = c.nextRemindDate ? `"${getRemindDaysText(c.nextRemindDate)}"` : '"无"';
+          let followUpDetails = c.followUps && c.followUps.length > 0 ? c.followUps.map(fu => `[${fu.date}] ${fu.text}`).join('\n') : "";
+          csvContent += `"${c.name || ''}","${c.date || ''}","${c.phone || ''}","${c.location || ''}","${c.level || ''}",${remindText},${c.followUps ? c.followUps.length : 0},"${followUpDetails.replace(/"/g, '""')}"\n`;
+        });
+        const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement("a"); link.setAttribute("href", URL.createObjectURL(blob)); link.setAttribute("download", `客资数据_${getTodayDateString()}.csv`);
+        document.body.appendChild(link); link.click(); document.body.removeChild(link);
+      };
+
+      const getRemindDaysText = (timestamp) => {
+        if (!timestamp) return null;
+        const diff = Math.ceil((timestamp - Date.now()) / (1000 * 60 * 60 * 24));
+        if (diff < 0) return '已超时'; if (diff === 0) return '今天'; return `${diff}天后`;
+      };
+
+      const currentMonthData = useMemo(() => allMonthData[viewMonth] || { bizStats: { live: [], video: [], leads: [], gmv: 0 }, habits: { reading: Array(31).fill(false), exercise: Array(31).fill(false), review: Array(31).fill(false) } }, [allMonthData, viewMonth]);
+      const currentWeekPlan = useMemo(() => {
+        const monthData = FULL_YEAR_PLAN[viewMonth] || FULL_YEAR_PLAN[3]; const weekData = monthData.weeks && monthData.weeks[activeWeek] ? monthData.weeks[activeWeek] : { title: "计划周", tasks: [] };
+        const combined = [ ...FIXED_WEEKLY_TASKS.map((t, i) => ({ ...t, id: `fixed_M${viewMonth}_W${activeWeek}_${i}` })), ...(weekData.tasks || []).map((t, i) => ({ text: t.text, category: t.cat || 'work', critical: t.crit || false, id: `spec_M${viewMonth}_W${activeWeek}_${i}` })) ];
+        return { ...weekData, tasks: combined, keyword: monthData.keyword };
+      }, [viewMonth, activeWeek]);
+
+      const weekProgress = useMemo(() => {
+        const total = currentWeekPlan.tasks.length; const done = currentWeekPlan.tasks.filter(t => tasksCompleted[t.id]).length;
+        return total === 0 ? 0 : Math.round((done / total) * 100);
+      }, [currentWeekPlan, tasksCompleted]);
+
+      const totalGMV = useMemo(() => Object.values(allMonthData).reduce((sum, m) => sum + (m.bizStats && m.bizStats.gmv ? m.bizStats.gmv : 0), 0), [allMonthData]);
+
+      const theme = {
+        isDark: isDarkMode,
+        bg: isDarkMode ? 'bg-[#0f212e]' : 'bg-[#f5f5f7]',
+        card: isDarkMode ? 'bg-[#1a2c38]/95 border border-[#213743] shadow-xl backdrop-blur-xl' : 'bg-white border border-[#d2d2d7]/50 shadow-sm backdrop-blur-xl',
+        modalBg: isDarkMode ? 'bg-[#1a2c38]' : 'bg-white',
+        textMain: isDarkMode ? 'text-white' : 'text-[#1d1d1f]',
+        textSub: isDarkMode ? 'text-[#b1bad3]' : 'text-[#86868b]',
+        inputBg: isDarkMode ? 'bg-[#0f212e] border border-[#213743]' : 'bg-gray-50 border border-gray-200',
+        accent: isDarkMode ? '#34c759' : '#0071e3', 
+        calendarNum: isDarkMode ? '#34c759' : '#1d1d1f', 
+        rowEven: isDarkMode ? 'bg-[#1a2c38]/30' : 'bg-white',
+        rowOdd: isDarkMode ? 'bg-[#213743]/20' : 'bg-[#f8f9fa]',
+        hoverRow: isDarkMode ? 'hover:bg-[#34c759]/5' : 'hover:bg-blue-50/50',
+        habitBox: isDarkMode ? 'bg-[#213743]' : 'bg-white border border-[#d2d2d7]/30 shadow-inner',
+        annualCard: isDarkMode ? 'bg-gradient-to-br from-[#2f4553] to-[#1a2c38] border border-[#384c5a]' : 'bg-gradient-to-br from-[#0071e3] to-[#005bb7] border border-transparent shadow-lg shadow-blue-500/30',
+        redUp: isDarkMode ? 'text-[#ff4d4f] bg-[#ff4d4f]/10' : 'text-[#e6282b] bg-[#fdf2f2]',
+        greenDown: isDarkMode ? 'text-[#34c759] bg-[#34c759]/10' : 'text-[#0f9958] bg-[#f2f9f5]',
+      };
+
+      const activePortfolio = useMemo(() => portfolio.filter(p => p.market === investMarket), [portfolio, investMarket]);
+      let totalMarketValue = 0, totalCost = 0, todayPnL = 0;
+      const enrichedPortfolio = activePortfolio.map(item => {
+          const sData = stockData.find(s => s.code === item.code) || {};
+          const price = parseFloat(sData.price) || 0;
+          const change = parseFloat(sData.change) || 0;
+          const changePct = parseFloat(sData.changePct) || 0;
+          const mv = item.quantity * price;
+          const cst = item.quantity * item.costPrice;
+          const pnl = mv - cst;
+          const todayItemPnL = item.quantity * change;
+          totalMarketValue += mv;
+          totalCost += cst;
+          todayPnL += todayItemPnL;
+          return { ...item, sData, price, change, changePct, mv, cst, pnl, todayItemPnL };
+      });
+      const totalPnL = totalMarketValue - totalCost;
+      const totalPnLPct = totalCost > 0 ? (totalPnL / totalCost) * 100 : 0;
+
+      if (loading) return <div className={`min-h-screen flex items-center justify-center ${theme.bg}`}><RefreshCw className="animate-spin text-green-500 w-10 h-10" /></div>;
+      const currentLogo = MONTH_LOGOS[viewMonth] || MONTH_LOGOS[3]; const CurrentIcon = currentLogo.icon;
+      const currentMonthExpenseList = Array.isArray(expenses[`${systemYear}-${String(viewMonth).padStart(2,'0')}`]) ? expenses[`${systemYear}-${String(viewMonth).padStart(2,'0')}`] : [];
+
+      return (
+        <div className={`min-h-screen relative overflow-x-hidden ${theme.bg} transition-all duration-1000 pb-20`}>
+          <div className="fixed inset-0 pointer-events-none opacity-[0.03] z-0" style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E")` }}></div>
+
+          <div className="max-w-6xl mx-auto space-y-5 md:space-y-6 relative z-10 pt-6 md:pt-10 px-3 md:px-6">
+            <header className="flex flex-col xl:flex-row xl:justify-between items-center xl:items-start gap-4 w-full">
+              <div className="flex flex-col items-center xl:items-start gap-3 w-full xl:w-auto">
+                <div className="relative group flex items-center gap-4 cursor-pointer">
+                  <select value={viewMonth} onChange={(e) => setViewMonth(parseInt(e.target.value))} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-20">
+                    {[3,4,5,6,7,8,9,10,11,12].map(m => <option key={m} value={m}>{m}月执行看板</option>)}
+                  </select>
+                  <div className={`p-3 rounded-2xl ${currentLogo.bg} ${currentLogo.color} transition-all duration-500 group-hover:scale-110 shadow-inner`}>
+                    <CurrentIcon className="w-8 h-8 md:w-10 md:h-10" strokeWidth={2.5} />
+                  </div>
+                  <div className="flex flex-col">
+                    <div className="flex items-center gap-2">
+                       <h1 className={`text-2xl md:text-3xl font-black tracking-tight ${theme.textMain}`}>{currentLogo.main}</h1>
+                       <ChevronDown className={`w-5 h-5 opacity-30 group-hover:translate-y-1 transition-transform ${theme.textMain}`} />
+                    </div>
+                    <span className="text-[#34c759] text-xs font-bold tracking-widest mt-0.5 opacity-90">{currentLogo.sub}</span>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3 w-full justify-center xl:justify-start">
+                  <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full shadow-sm ${isDarkMode ? 'bg-[#1a2c38] border border-[#213743]' : 'bg-white border border-[#d2d2d7]/50'}`}>
+                    <span className={`text-[11px] font-black ${isDarkMode ? 'text-[#34c759]' : 'text-blue-600'}`}>{["周日","周一","周二","周三","周四","周五","周六"][currentTime.getDay()]}</span>
+                    <span className={`text-xs font-bold font-mono ${theme.textMain}`}>{currentTime.toLocaleTimeString('zh-CN', { hour12: false })}</span>
+                  </div>
+                  <div className={`flex items-center gap-3 px-4 py-1.5 rounded-full shadow-sm ${theme.card}`}>
+                    <Sun className="w-3.5 h-3.5 text-yellow-500 animate-spin-slow" />
+                    <span className={`text-[11px] font-bold ${theme.textMain}`}>16°C</span>
+                    <div className={`w-[1px] h-3 ${isDarkMode ? 'bg-white/10' : 'bg-slate-300'}`} />
+                    <span className={`text-[10px] font-bold flex items-center gap-1 ${theme.textMain} opacity-80`}><Wind className="w-3 h-3 text-blue-400" /> 15km/h</span>
+                  </div>
+
+                  {upcomingEvents.length > 0 && (
+                    <div className="h-[28px] relative w-[180px]">
+                       {upcomingEvents.map((ev, i) => (
+                         <div key={i} className={`absolute inset-0 flex items-center justify-center transition-opacity duration-1000 ease-in-out ${i === activeEventIdx ? 'opacity-100 z-10' : 'opacity-0 z-0'}`}>
+                            <div className={`flex items-center gap-1.5 px-3 py-1 w-full rounded-full text-[10px] font-bold shadow-sm justify-center ${isDarkMode ? 'bg-[#213743] border border-[#2f4553] text-[#b1bad3]' : 'bg-gray-50 border border-gray-200 text-gray-600'}`}>
+                               {ev.type === 'birthday' ? <Cake className={`w-3 h-3 shrink-0 ${isDarkMode ? 'text-pink-400' : 'text-pink-500'}`} /> : <Gift className={`w-3 h-3 shrink-0 ${isDarkMode ? 'text-blue-400' : 'text-blue-500'}`} />}
+                               <span className="truncate">{ev.daysAway === 0 ? `今天 ${ev.name} ${ev.type==='birthday'?'生日':''}` : `距 ${ev.name} ${ev.type==='birthday'?'生日':''} ${ev.daysAway} 天`}</span>
+                            </div>
+                         </div>
+                       ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+              
+              <div className="flex flex-wrap items-center gap-3">
+                <button onClick={() => setShowCalc(true)} className={`p-3 rounded-full flex items-center justify-center shadow-md active:scale-90 ${isDarkMode ? 'bg-[#213743] text-[#34c759]' : 'bg-white text-blue-600'}`}><Calculator className="w-4 h-4" /></button>
+                <button onClick={() => {setShowClientModal(true); setCrmTab('list'); setActiveClientForFollowUp(null);}} className={`p-3 rounded-full flex items-center justify-center shadow-md active:scale-90 ${isDarkMode ? 'bg-[#213743] text-purple-400' : 'bg-white text-purple-600'}`}><UserPlus className="w-4 h-4" /></button>
+                <div onClick={() => setIsDarkMode(!isDarkMode)} className={`relative h-[24px] w-[44px] cursor-pointer rounded-full shadow-inner ${isDarkMode ? 'bg-[#34c759]' : 'bg-gray-300'}`}>
+                   <span className={`absolute top-[2px] left-[2px] h-[20px] w-[20px] transform rounded-full bg-white shadow-md transition-all duration-300 ${isDarkMode ? 'translate-x-[20px]' : 'translate-x-0'}`} />
+                </div>
+              </div>
+            </header>
+
+            <section className="grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-5">
+              {[
+                { key: 'live', label: "直播场次", icon: <Mic className="w-5 h-5"/>, target: 15, color: theme.accent },
+                { key: 'video', label: "短视频数", icon: <Video className="w-5 h-5"/>, target: 10, color: "#5856d6" },
+                { key: 'leads', label: "获客人数", icon: <UserPlus className="w-5 h-5"/>, target: 30, color: isDarkMode ? '#34c759' : '#0071e3' }
+              ].map(stat => {
+                const count = (currentMonthData.bizStats[stat.key] || []).length;
+                const prog = Math.min(100, Math.round((count / stat.target) * 100));
+                return (
+                  <div key={stat.key} className={`${theme.card} rounded-[1.5rem] p-4 shadow-lg relative overflow-hidden flex flex-col justify-between`}>
+                    <div className="flex justify-between items-center mb-3">
+                      <div className="flex items-center gap-2">
+                         <div className={`p-2 rounded-xl shadow-inner ${isDarkMode ? 'bg-black/20' : 'bg-slate-50'}`} style={{color: stat.color}}>{stat.icon}</div>
+                         <span className={`text-[10px] md:text-xs font-black uppercase tracking-widest ${theme.textSub}`}>{stat.label}</span>
+                      </div>
+                    </div>
+                    <div>
+                       <div className="flex items-baseline gap-1 mb-1.5">
+                          <span className={`text-2xl font-black tracking-tighter ${theme.textMain}`}>{count}</span>
+                          <span className={`text-[10px] font-bold ${theme.textSub}`}>/ {stat.target}</span>
+                       </div>
+                       <div className="flex items-center gap-2">
+                         <div className={`flex-1 h-1.5 rounded-full overflow-hidden ${isDarkMode ? 'bg-black/30' : 'bg-slate-200'}`}>
+                           <div className="h-full transition-all duration-1000" style={{ width: `${prog}%`, backgroundColor: stat.color }} />
+                         </div>
+                         <div className="flex items-center gap-0.5">
+                           {count > 0 && <button onClick={() => handleBizStatRemove(stat.key)} className={`p-1 rounded-full shadow-sm active:scale-90 ${isDarkMode ? 'bg-red-500/20 text-red-400 border border-red-500/30' : 'bg-red-50 text-red-500 border border-red-100'}`}><Minus className="w-2.5 h-2.5" /></button>}
+                           <button onClick={() => handleBizStatAdd(stat.key)} className={`p-1 rounded-full text-white active:scale-90 shadow-md`} style={{backgroundColor: stat.color}}><Plus className="w-2.5 h-2.5" /></button>
+                         </div>
+                       </div>
+                    </div>
+                  </div>
+                );
+              })}
+              
+              <div className={`${theme.card} rounded-[1.5rem] p-4 shadow-lg relative overflow-hidden flex flex-col justify-between ${isDarkMode ? 'border-orange-500/30' : 'border-orange-400'}`}>
+                 <div className="flex justify-between items-center mb-3">
+                    <div className="flex items-center gap-2">
+                       <div className={`p-2 rounded-xl shadow-inner ${isDarkMode ? 'bg-orange-500/20 text-orange-500' : 'bg-orange-50 text-orange-600'}`}><Wallet className="w-5 h-5"/></div>
+                       <span className={`text-[10px] md:text-xs font-black uppercase tracking-widest ${theme.textSub}`}>本月 GMV</span>
+                    </div>
+                 </div>
+                 <div>
+                    <div className="flex items-baseline gap-1 mb-1.5">
+                       <input type="number" step="0.1" value={currentMonthData.bizStats.gmv || ""} onChange={(e) => {
+                          const v = parseFloat(e.target.value) || 0; saveData({ allMonthData: { ...allMonthData, [viewMonth]: { ...currentMonthData, bizStats: { ...currentMonthData.bizStats, gmv: v } } } });
+                       }} className={`text-2xl font-black bg-transparent border-none outline-none w-16 text-left tracking-tighter ${isDarkMode?'text-orange-400':'text-orange-600'}`} placeholder="0" />
+                       <span className={`text-[10px] font-bold ${theme.textSub}`}>/ 8w</span>
+                    </div>
+                    <div className={`flex-1 h-1.5 rounded-full overflow-hidden ${isDarkMode ? 'bg-black/30' : 'bg-slate-200'}`}>
+                       <div className="h-full bg-orange-500 transition-all duration-1000 shadow-[0_0_10px_rgba(249,115,22,0.5)]" style={{ width: `${Math.min(100, ((currentMonthData.bizStats.gmv||0)/8)*100)}%` }} />
+                    </div>
+                 </div>
+              </div>
+            </section>
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              <div className="lg:col-span-8 space-y-6">
+                <div>
+                   <div className="flex items-center justify-between px-2 pb-3 pt-1">
+                     <h2 className={`text-sm font-bold flex items-center gap-2 ${theme.textMain}`}><Zap className={`w-4 h-4 ${isDarkMode ? 'text-[#34c759]' : 'text-[#0071e3]'} fill-current`} /> 执行周报</h2>
+                     <div className={`rounded-xl p-0.5 flex shadow-sm ${isDarkMode ? 'bg-[#1a2c38] border border-[#213743]' : 'bg-white border border-gray-200'}`}>
+                       {["一", "二", "三", "四", "五"].slice(0, FULL_YEAR_PLAN[viewMonth] && FULL_YEAR_PLAN[viewMonth].weeks ? FULL_YEAR_PLAN[viewMonth].weeks.length : 4).map((l, i) => (
+                         <button key={i} onClick={() => setActiveWeek(i)} className={`px-4 py-1.5 rounded-lg text-[10px] font-black transition-all ${activeWeek === i ? (isDarkMode ? 'bg-[#34c759] text-[#0f212e]' : 'bg-[#0071e3] text-white shadow-md') : `${theme.textSub} hover:opacity-100`}`}>第{l}周</button>
+                       ))}
+                     </div>
+                   </div>
+
+                   <div className={`${theme.card} rounded-[2rem] border-none overflow-hidden shadow-2xl`}>
+                     <div className={`px-8 py-5 flex flex-col gap-3 ${isDarkMode ? 'bg-white/[0.03]' : 'bg-slate-50/80'}`}>
+                       <div className="flex justify-between items-center">
+                         <h3 className={`text-lg font-bold tracking-tight ${theme.textMain}`}>{currentWeekPlan.title}</h3>
+                         <div className={`px-4 py-1.5 rounded-xl font-black text-sm border ${isDarkMode ? 'border-[#34c759]/30 text-[#34c759]' : 'border-blue-500/30 text-blue-600'}`}>{weekProgress}%</div>
+                       </div>
+                       <div className={`w-full h-1 rounded-full overflow-hidden ${isDarkMode ? 'bg-black/30' : 'bg-slate-200'}`}>
+                         <div className="h-full transition-all duration-700 ease-out shadow-[0_0_12px_rgba(52,199,89,0.3)]" style={{ width: `${weekProgress}%`, backgroundColor: theme.accent }} />
+                       </div>
+                     </div>
+                     <div className="space-y-0 relative z-10">
+                       {currentWeekPlan.tasks.map((task, idx) => (
+                         <div key={task.id} onClick={() => handleTaskToggle(task.id)} 
+                           className={`flex items-center gap-4 md:gap-6 p-4 sm:p-5 transition-all duration-300 cursor-pointer group active:scale-[0.99] border-none ${tasksCompleted[task.id] ? 'opacity-30 grayscale' : ''} ${idx % 2 === 0 ? theme.rowEven : theme.rowOdd} ${theme.hoverRow}`}>
+                           <div className="shrink-0 transition-transform group-hover:scale-110">
+                             {tasksCompleted[task.id] ? <CheckCircle2 className="w-5 h-5 md:w-6 md:h-6 text-[#34c759]" /> : <Circle className={`w-5 h-5 md:w-6 md:h-6 ${isDarkMode ? 'text-white/10' : 'text-slate-300'}`} />}
+                           </div>
+                           <div className="flex-1">
+                             <div className="flex items-center gap-2 mb-1">
+                               <span className={`text-[7px] font-black px-2 py-0.5 rounded-full text-white uppercase tracking-widest ${task.category === 'work' ? (isDarkMode ? 'bg-[#2f4553]' : 'bg-[#1d1d1f]') : task.category === 'life' ? 'bg-[#ff3b30]' : 'bg-[#5856d6]'}`}>{task.category}</span>
+                               {task.critical && <span className="text-[#ff9500] text-[8px] font-black tracking-widest flex items-center gap-1"><Sparkles className="w-2 h-2" /> CORE</span>}
+                             </div>
+                             <p className={`text-xs md:text-sm font-semibold tracking-tight ${tasksCompleted[task.id] ? 'line-through font-normal text-opacity-50' : theme.textMain}`}>{task.text}</p>
+                           </div>
+                         </div>
+                       ))}
+                     </div>
+                   </div>
+                </div>
+                
+                <div className={`${theme.card} rounded-[2rem] border-none overflow-hidden shadow-2xl p-4 md:p-6 mt-4`}>
+                   <div className={`flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-5 pb-4 border-b ${isDarkMode ? 'border-[#213743]' : 'border-gray-200'}`}>
+                      <div className="flex items-center gap-2">
+                         <div className="p-2 bg-red-500/10 text-red-500 rounded-xl"><PieChart className="w-5 h-5"/></div>
+                         <h3 className={`text-base font-bold tracking-tight ${theme.textMain}`}>智能券商追踪</h3>
+                      </div>
+                      <div className="flex items-center gap-3">
+                         <div className={`flex p-1 rounded-xl w-max ${isDarkMode ? 'bg-[#0f212e] border border-[#213743]' : 'bg-gray-100 border border-gray-200'}`}>
+                            <button onClick={() => setInvestMarket('A')} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${investMarket === 'A' ? (isDarkMode ? 'bg-[#213743] text-white shadow' : 'bg-white text-gray-900 shadow') : theme.textSub}`}>A股</button>
+                            <button onClick={() => setInvestMarket('US')} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${investMarket === 'US' ? (isDarkMode ? 'bg-[#213743] text-white shadow' : 'bg-white text-gray-900 shadow') : theme.textSub}`}>美股</button>
+                         </div>
+                         <button onClick={() => setShowPortfolioDetails(!showPortfolioDetails)} className={`px-3 py-1.5 rounded-lg text-xs font-bold ${showPortfolioDetails ? 'bg-gray-500' : 'bg-red-500'} text-white shadow-md flex items-center gap-1 transition-all active:scale-95`}>
+                            {showPortfolioDetails ? <EyeOff className="w-3.5 h-3.5"/> : <Eye className="w-3.5 h-3.5"/>}
+                            {showPortfolioDetails ? '隐藏持仓' : '查看持仓'}
+                         </button>
+                         <button onClick={() => setShowPortfolioModal(true)} className={`px-3 py-1.5 rounded-lg text-xs font-bold bg-red-500 hover:bg-red-600 text-white shadow-md flex items-center gap-1 transition-all active:scale-95`}><Plus className="w-3.5 h-3.5"/> 录入</button>
+                      </div>
+                   </div>
+
+                   {showPortfolioDetails && (
+                     <div className="animate-in fade-in slide-in-from-top-2 duration-300">
+                        <div className={`grid grid-cols-3 gap-3 md:gap-5 mb-5 p-4 md:p-6 rounded-[1.5rem] border ${isDarkMode ? 'bg-[#0f212e]/50 border-[#213743]' : 'bg-gray-50/50 border-gray-100'}`}>
+                            <div className="flex flex-col justify-center">
+                                <div className={`text-[10px] md:text-xs font-bold mb-1 ${theme.textSub}`}>总市值 ({investMarket === 'A' ? 'CNY' : 'USD'})</div>
+                                <div className={`text-lg md:text-2xl font-black font-mono tracking-tighter ${theme.textMain}`}>{formatInvestNum(totalMarketValue)}</div>
+                            </div>
+                            <div className="flex flex-col justify-center border-l border-dashed pl-3 md:pl-5 border-gray-300 dark:border-gray-700">
+                                <div className={`text-[10px] md:text-xs font-bold mb-1 ${theme.textSub}`}>今日盈亏</div>
+                                <div className={`text-lg md:text-2xl font-black font-mono tracking-tighter ${todayPnL >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>
+                                    {todayPnL > 0 ? '+' : ''}{formatInvestNum(todayPnL)}
+                                </div>
+                            </div>
+                            <div className="flex flex-col justify-center border-l border-dashed pl-3 md:pl-5 border-gray-300 dark:border-gray-700">
+                                <div className={`text-[10px] md:text-xs font-bold mb-1 flex items-center gap-1 ${theme.textSub}`}>累计盈亏 <span className="hidden md:inline">({totalPnLPct > 0 ? '+' : ''}{totalPnLPct.toFixed(2)}%)</span></div>
+                                <div className={`text-lg md:text-2xl font-black font-mono tracking-tighter ${totalPnL >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>
+                                    {totalPnL > 0 ? '+' : ''}{formatInvestNum(totalPnL)}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="space-y-2 md:space-y-3 mb-6 relative">
+                            <div className={`hidden md:flex justify-between w-full text-[10px] font-bold pb-2 border-b uppercase tracking-widest ${theme.textSub} ${isDarkMode ? 'border-[#213743]' : 'border-gray-200'}`}>
+                               <div className="w-[25%] shrink-0">标的 / 代码</div>
+                               <div className="w-[20%] text-right shrink-0">持仓 / 成本</div>
+                               <div className="w-[20%] text-right shrink-0">现价 / 涨跌幅</div>
+                               <div className="w-[25%] text-right shrink-0">今日 / 累计</div>
+                               <div className="w-[10%] text-right shrink-0">操作</div>
+                            </div>
+                            {enrichedPortfolio.length === 0 && (
+                               <div className={`text-center py-10 text-xs font-bold border-dashed border-2 rounded-xl ${isDarkMode ? 'border-[#213743] text-gray-500' : 'border-gray-200 text-gray-400'}`}>暂无持仓数据。</div>
+                            )}
+                            {enrichedPortfolio.map(item => (
+                               <div key={item.id} className={`flex items-center justify-between w-full p-3 md:p-0 rounded-xl md:rounded-none border md:border-none md:border-b last:border-0 md:py-3 transition-colors ${isDarkMode ? 'bg-[#0f212e] md:bg-transparent border-[#213743]' : 'bg-white md:bg-transparent border-gray-100'} ${theme.hoverRow}`}>
+                                  <div className="w-[25%] shrink-0 flex flex-col justify-center">
+                                     <a href={getXueqiuUrl(item.code)} target="_blank" rel="noreferrer" className={`text-sm font-bold truncate hover:underline ${theme.textMain}`}>{item.sData.name || '获取中..'}</a>
+                                     <div className={`text-[10px] font-mono mt-0.5 ${theme.textSub}`}>{item.code.toUpperCase()}</div>
+                                  </div>
+                                  <div className="w-[20%] text-right shrink-0 flex flex-col justify-center">
+                                     <div className={`text-xs font-mono font-bold ${theme.textMain}`}>{item.quantity}</div>
+                                     <div className={`text-[9px] mt-0.5 ${theme.textSub}`}>成本 {item.costPrice}</div>
+                                  </div>
+                                  <div className="w-[20%] text-right shrink-0 flex flex-col justify-center">
+                                     <div className={`text-xs font-mono font-bold ${item.change >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>{item.price > 0 ? item.price.toFixed(2) : '--'}</div>
+                                     <div className={`text-[9px] mt-0.5 font-bold ${item.change >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>{item.change > 0 ? '+' : ''}{item.changePct || '0.00'}%</div>
+                                  </div>
+                                  <div className="w-[25%] text-right shrink-0 flex flex-col justify-center">
+                                     <div className={`text-xs font-mono font-bold ${item.todayItemPnL >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>{item.todayItemPnL > 0 ? '+' : ''}{item.todayItemPnL.toFixed(2)}</div>
+                                     <div className={`text-[9px] mt-0.5 font-bold ${item.pnl >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>总 {item.pnl > 0 ? '+' : ''}{item.pnl.toFixed(0)}</div>
+                                  </div>
+                                  <div className="w-[10%] flex justify-end shrink-0 items-center">
+                                      <button onClick={() => handleRemovePosition(item.id)} className={`p-1.5 rounded-md transition-colors text-gray-400 hover:text-red-500 hover:bg-red-500/10`}><Trash2 className="w-4 h-4"/></button>
+                                  </div>
+                               </div>
+                            ))}
+                        </div>
+                     </div>
+                   )}
+
+                   <div className="mt-8 mb-6 flex items-center gap-3">
+                      <div className={`h-[1px] flex-1 ${isDarkMode ? 'bg-[#213743]' : 'bg-gray-200'}`}></div>
+                      <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-full ${isDarkMode ? 'bg-[#0f212e] text-[#b1bad3]' : 'bg-gray-100 text-gray-500'}`}><History className="w-3 h-3 inline-block mr-1 mb-0.5" />盈亏数据历史</span>
+                      <div className={`h-[1px] flex-1 ${isDarkMode ? 'bg-[#213743]' : 'bg-gray-200'}`}></div>
+                   </div>
+
+                   <div className={`flex flex-wrap items-center gap-5 mb-4 border-b pb-2 ${isDarkMode ? 'border-[#213743]' : 'border-gray-200'}`}>
+                      {['daily', 'monthly', 'yearly', 'stage'].map((t, i) => (
+                         <button key={t} onClick={()=>setInvestTab(t)} className={`text-xs md:text-sm font-black transition-colors ${investTab===t ? theme.textMain : theme.textSub} relative pb-1`}>
+                            {['日历盈亏', '月度汇总', '年度汇总', '区间测算'][i]}
+                            {investTab===t && <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-4 h-0.5 bg-red-500 rounded-full"></div>}
+                         </button>
+                      ))}
+                   </div>
+
+                   {investTab !== 'yearly' && investTab !== 'stage' && (
+                     <div className={`flex justify-center mb-3 text-sm font-bold ${theme.textMain}`}>
+                        <ChevronLeft className="w-4 h-4 cursor-pointer hover:text-blue-500" onClick={()=>setViewMonth(prev => prev > 1 ? prev - 1 : 12)} />
+                        <span className="mx-4">{systemYear}年 {viewMonth}月</span>
+                        <ChevronRight className="w-4 h-4 cursor-pointer hover:text-blue-500" onClick={()=>setViewMonth(prev => prev < 12 ? prev + 1 : 1)} />
+                     </div>
+                   )}
+
+                   {investTab === 'stage' && (
+                     <div className={`p-4 rounded-xl border mb-2 flex flex-col items-center gap-3 ${isDarkMode ? 'bg-[#0f212e] border-[#213743]' : 'bg-gray-50 border-gray-200'}`}>
+                        <div className="flex items-center justify-center gap-2 w-full">
+                           <input type="date" value={stageDates.start} onChange={e=>setStageDates({...stageDates, start: e.target.value})} className={`px-2 py-1.5 rounded-lg text-xs border outline-none ${theme.inputBg} ${theme.textMain}`} />
+                           <span className={`text-xs ${theme.textSub}`}>至</span>
+                           <input type="date" value={stageDates.end} onChange={e=>setStageDates({...stageDates, end: e.target.value})} className={`px-2 py-1.5 rounded-lg text-xs border outline-none ${theme.inputBg} ${theme.textMain}`} />
+                        </div>
+                        <div className={`text-xl font-black ${theme.textMain}`}>
+                           区间合计: 
+                           <span className={getInvestmentTotal('stage') >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}> {investMarket==='US'?'$':''}{formatInvestNum(getInvestmentTotal('stage'))}</span>
+                        </div>
+                     </div>
+                   )}
+
+                   {investTab === 'daily' && (
+                     <>
+                       <div className="grid grid-cols-5 mb-1">
+                         {['周一', '周二', '周三', '周四', '周五'].map(d => <div key={d} className={`text-center text-[10px] font-bold ${theme.textSub} py-1`}>{d}</div>)}
+                       </div>
+                       <div className={`border-t border-l flex flex-col ${isDarkMode ? 'border-[#213743]' : 'border-gray-200'}`}>
+                          {generateInvestCalendar().map((week, wi) => (
+                            <div key={wi} className="grid grid-cols-5 h-10 md:h-12">
+                              {week.map((day, di) => {
+                                 if (!day) return <div key={`empty-${wi}-${di}`} className={`border-r border-b ${isDarkMode ? 'border-[#213743] bg-black/20' : 'border-gray-200 bg-gray-50'}`}></div>;
+                                 const dateStr = `${systemYear}-${String(viewMonth).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+                                 const currentMarketData = investments[investMarket] || { initialCapital: investMarket==='A'?1000000:100000, records: {} };
+                                 const val = currentMarketData.records[dateStr];
+                                 const rate = val !== undefined ? val / currentMarketData.initialCapital : 0;
+                                 const displayVal = val !== undefined ? (investMode === 'amount' ? (investMarket==='US'?'$':'') + formatInvestNum(val) : formatInvestNum(rate, true)) : '';
+                                 const isHoliday = HOLIDAYS.find(h => h.month === viewMonth && h.day === day);
+                                 let cellColorClass = theme.textMain; let cellBgClass = '';
+                                 if (val > 0) { cellColorClass = theme.redUp.split(' ')[0]; cellBgClass = theme.redUp.split(' ')[1]; }
+                                 else if (val < 0) { cellColorClass = theme.greenDown.split(' ')[0]; cellBgClass = theme.greenDown.split(' ')[1]; }
+                                 else if (isHoliday) { cellColorClass = theme.textSub; cellBgClass = isDarkMode ? 'bg-[#0f212e]' : 'bg-gray-100'; }
+                                 return (
+                                   <div key={day} className={`border-r border-b flex flex-col items-center justify-center transition-all ${isDarkMode ? 'border-[#213743]' : 'border-gray-200'} ${cellBgClass}`}>
+                                     <span className={`text-[9px] font-bold ${val!==undefined ? theme.textMain : theme.textSub}`}>{day}</span>
+                                     <span className={`text-[9px] md:text-[11px] font-black tracking-tighter ${cellColorClass}`}>
+                                        {val !== undefined ? displayVal : (isHoliday ? isHoliday.name : (day < new Date().getDate() && viewMonth===systemMonth ? '休' : ''))}
+                                     </span>
+                                   </div>
+                                 );
+                              })}
+                            </div>
+                          ))}
+                       </div>
+                     </>
+                   )}
+
+                   {investTab === 'monthly' && (
+                     <div className="py-6 text-center mt-2">
+                        <p className={`text-[10px] mb-1 ${theme.textSub}`}>{systemYear}年{viewMonth}月 净利</p>
+                        <p className={`text-4xl md:text-5xl font-black ${getInvestmentTotal('monthly') >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>{investMarket==='US'?'$':''}{formatInvestNum(getInvestmentTotal('monthly'))}</p>
+                     </div>
+                   )}
+                   
+                   {investTab === 'yearly' && (
+                     <div className="py-6 text-center mt-2">
+                        <p className={`text-[10px] mb-1 ${theme.textSub}`}>{systemYear}年 总利润</p>
+                        <p className={`text-4xl md:text-5xl font-black ${getInvestmentTotal('yearly') >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>{investMarket==='US'?'$':''}{formatInvestNum(getInvestmentTotal('yearly'))}</p>
+                     </div>
+                   )}
+
+                   <div className={`mt-4 flex justify-between items-end border-t pt-3 ${isDarkMode ? 'border-[#213743]' : 'border-gray-200'}`}>
+                      <div className={`text-xs font-bold ${theme.textMain}`}>
+                         {investTab === 'daily' && <span>月累计: <span className={getInvestmentTotal('monthly') >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}>{investMarket==='US'?'$':''}{formatInvestNum(getInvestmentTotal('monthly'))}</span></span>}
+                      </div>
+                   </div>
+                </div>
+              </div>
+
+              <div className="lg:col-span-4 space-y-6">
+                 <div className={`${theme.card} rounded-[2rem] p-5 shadow-xl border-none relative overflow-hidden`}>
+                    <h3 className={`text-[10px] font-black uppercase tracking-widest mb-3 flex items-center gap-1.5 ${theme.textSub}`}><Globe className="w-3.5 h-3.5 text-blue-500"/> 7x24 实时快讯</h3>
+                    <div className="news-ticker-container h-[140px] overflow-hidden relative w-full mask-image-linear-y">
+                       {newsList.length === 0 && <div className={`text-[10px] text-center mt-5 ${theme.textSub}`}>拉取新浪极速资讯中...</div>}
+                       {newsList.length > 0 && (
+                          <div className="news-ticker absolute w-full flex flex-col cursor-pointer">
+                             {[...newsList, ...newsList].map((news, i) => (
+                                <a key={i} href={news.url} target="_blank" rel="noreferrer" className={`block group py-2 border-b last:border-0 shrink-0 ${isDarkMode ? 'border-white/5' : 'border-gray-200'}`}>
+                                   <div className={`text-[11px] leading-snug line-clamp-1 transition-colors group-hover:text-blue-500 ${theme.textMain}`}>{news.title}</div>
+                                   <div className={`text-[8px] mt-0.5 flex items-center gap-1 opacity-50 ${theme.textSub}`}><ExternalLink className="w-2.5 h-2.5"/> 极速播报</div>
+                                </a>
+                             ))}
+                          </div>
+                       )}
+                    </div>
+                 </div>
+
+                 <div className={`${theme.card} rounded-[2rem] p-5 shadow-xl border-none flex flex-col justify-between relative overflow-hidden group`}>
+                    <div className={`absolute -right-8 -top-8 w-32 h-32 rounded-full blur-3xl opacity-20 ${isDarkMode ? 'bg-blue-500' : 'bg-blue-300'}`}></div>
+                    <div className="relative z-10">
+                       <h3 className={`text-[10px] font-black uppercase tracking-widest mb-1 flex items-center gap-1.5 ${theme.textSub}`}><Receipt className="w-3.5 h-3.5"/> 个人记账本</h3>
+                       <div className="flex justify-between items-end mt-3">
+                         <div>
+                            <p className={`text-[9px] mb-0.5 ${theme.textSub}`}>当月总支</p>
+                            <div className="flex items-baseline gap-1">
+                               <span className={`text-xs font-bold ${theme.textMain}`}>¥</span>
+                               <span className={`text-2xl font-black tracking-tighter ${theme.textMain}`}>{getCurrentMonthExpensesTotal('out')}</span>
+                            </div>
+                         </div>
+                         <div className="text-right">
+                            <p className={`text-[9px] mb-0.5 ${theme.textSub}`}>当月总收</p>
+                            <div className="flex items-baseline gap-0.5">
+                               <span className={`text-[10px] font-bold text-green-500`}>+</span>
+                               <span className={`text-lg font-black tracking-tighter text-green-500`}>{getCurrentMonthExpensesTotal('in')}</span>
+                            </div>
+                         </div>
+                       </div>
+                    </div>
+                    <button onClick={()=>setShowExpenseModal(true)} className="mt-5 py-2.5 w-full rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold transition-all shadow-md active:scale-95 flex justify-center items-center gap-2 relative z-10">
+                       <Plus className="w-3.5 h-3.5" /> 记一笔
+                    </button>
+                 </div>
+
+                 <div onClick={() => window.open('https://bxkp.org/', '_blank')} className={`rounded-[2rem] p-5 relative overflow-hidden flex items-center justify-between border-transparent shadow-2xl shadow-purple-500/20 cursor-pointer group hover:scale-[1.02] transition-transform bg-gradient-to-br from-purple-600 via-indigo-600 to-blue-600`}>
+                    <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4IiBoZWlnaHQ9IjgiPgo8cmVjdCB3aWR0aD0iOCIgaGVpZ2h0PSI4IiBmaWxsPSIjZmZmIiBmaWxsLW9wYWNpdHk9IjAuMSIvPgo8L3N2Zz4=')] opacity-20 mix-blend-overlay"></div>
+                    <div className="relative z-10">
+                       <p className={`text-[9px] font-black uppercase tracking-widest text-white/70 mb-1 flex items-center gap-1.5`}><Film className="w-3 h-3"/> 私人影视中心</p>
+                       <p className={`text-xl font-bold tracking-tight text-white mt-1 drop-shadow-md`}>全网高清首发</p>
+                       <div className="mt-3 text-[10px] font-bold text-white bg-black/20 px-3 py-1.5 rounded-full w-max backdrop-blur-md shadow-sm border border-white/10 flex items-center gap-1 group-hover:bg-white/20 transition-colors">点击极速观影 <ExternalLink className="w-2.5 h-2.5" /></div>
+                    </div>
+                    <PlayCircle className="w-20 h-20 text-white/10 absolute -right-3 top-1/2 -translate-y-1/2 group-hover:scale-110 group-hover:text-white/20 transition-all duration-500 drop-shadow-lg" />
+                 </div>
+
+                 <div className={`${theme.card} rounded-[2rem] p-5 border shadow-xl space-y-4 relative z-10`}>
+                    <h3 className={`text-[11px] font-bold flex items-center gap-2 ${theme.textMain}`}><Heart className="w-3.5 h-3.5 text-red-500 fill-red-500" /> 系统底层 (Habits)</h3>
+                    <HabitGrid label="当月运动" target={8} list={currentMonthData.habits.exercise} onToggle={(i) => handleHabitToggle('exercise', i)} theme={theme} color="#ff9500" icon={<Trophy className="w-3.5 h-3.5 text-orange-500" />} />
+                    <HabitGrid label="每日阅读" target={31} list={currentMonthData.habits.reading} onToggle={(i) => handleHabitToggle('reading', i)} theme={theme} color={theme.accent} icon={<Book className="w-3.5 h-3.5" />} />
+                    <HabitGrid label="每日复盘" target={31} list={currentMonthData.habits.review} onToggle={(i) => handleHabitToggle('review', i)} theme={theme} color="#34c759" icon={<FileSearch className="w-3.5 h-3.5" />} />
+                 </div>
+
+                 <div className={`${theme.annualCard} rounded-[2rem] p-5 relative overflow-hidden flex items-center justify-between border shadow-2xl`}>
+                    <div>
+                       <p className={`text-[9px] font-black uppercase tracking-widest text-white/60 mb-1`}>年度最终目标</p>
+                       <p className={`text-2xl font-bold tracking-tight text-white`}>{(INITIAL_ANNUAL_TARGET - totalGMV).toFixed(1)} <span className="text-sm font-normal">万</span></p>
+                    </div>
+                    <Target className="w-12 h-12 text-white/20 absolute right-4" />
+                 </div>
+              </div>
+            </div>
+          </div>
+          
+          {showExpenseModal && (
+            <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200" onClick={(e) => { if(e.target === e.currentTarget) setShowExpenseModal(false); }}>
+               <div className={`${theme.modalBg} rounded-t-[2rem] sm:rounded-[2rem] w-full max-w-xl h-[85vh] sm:h-[80vh] shadow-2xl flex flex-col transform transition-transform ${isDarkMode ? 'border border-[#213743]' : ''}`}>
+                 <div className={`p-5 border-b flex justify-between items-center ${isDarkMode ? 'border-[#213743]' : 'border-gray-200'}`}>
+                    <div className="flex items-center gap-3">
+                       <div className="p-2.5 rounded-xl bg-blue-500/20 text-blue-500"><Receipt className="w-5 h-5"/></div>
+                       <div>
+                          <h2 className={`text-lg font-bold ${theme.textMain}`}>收支记账本</h2>
+                          <p className={`text-xs ${theme.textSub}`}>当月收支结余情况</p>
+                       </div>
+                    </div>
+                    <button onClick={() => setShowExpenseModal(false)} className={`p-2 rounded-full ${theme.hoverRow}`}><X className={`w-5 h-5 ${theme.textSub}`}/></button>
+                 </div>
+                 
+                 <div className="p-5 flex-1 overflow-y-auto space-y-6">
+                    <div className={`flex p-1 rounded-xl w-max mx-auto mb-2 shadow-sm ${isDarkMode ? 'bg-[#0f212e] border border-[#213743]' : 'bg-gray-100 border border-gray-200'}`}>
+                       <button onClick={()=>setExpenseType('out')} className={`px-8 py-2 rounded-lg text-sm font-bold transition-all ${expenseType==='out' ? (isDarkMode?'bg-[#213743] text-white shadow':'bg-white text-gray-900 shadow') : theme.textSub}`}>记支出</button>
+                       <button onClick={()=>setExpenseType('in')} className={`px-8 py-2 rounded-lg text-sm font-bold transition-all ${expenseType==='in' ? (isDarkMode?'bg-[#213743] text-green-400 shadow':'bg-white text-green-600 shadow') : theme.textSub}`}>记收入</button>
+                    </div>
+                    <div className={`p-4 rounded-2xl border ${isDarkMode?'bg-[#0f212e] border-[#213743]':'bg-gray-50 border-gray-200'}`}>
+                       <div className="flex items-center gap-2 mb-2"><Wand2 className={`w-4 h-4 ${expenseType==='in' ? 'text-green-500' : 'text-purple-500'}`}/> <span className={`text-xs font-bold ${theme.textMain}`}>智能极速记账</span></div>
+                       <textarea value={newExpenseText} onChange={e=>setNewExpenseText(e.target.value)} placeholder={expenseType==='out' ? "粘贴或输入一段话，如：今天午饭吃了50元" : "粘贴或输入一段话，如：接了个私活赚了2000元"} className={`w-full p-3 rounded-xl border outline-none text-sm resize-none h-20 ${theme.inputBg} ${theme.textMain} focus:border-blue-500`} />
+                       <div className="flex justify-end mt-2">
+                          <button onClick={handleSmartParseExpense} className={`px-5 py-2 text-white text-sm font-bold rounded-lg shadow active:scale-95 transition-all ${expenseType==='in'?'bg-green-600 hover:bg-green-700':'bg-purple-600 hover:bg-purple-700'}`}>智能提取入账</button>
+                       </div>
+                    </div>
+                    <div>
+                       <h3 className={`text-xs font-bold mb-3 ${theme.textSub}`}>手动记账</h3>
+                       <div className="flex gap-2">
+                          <input type="number" placeholder="金额" value={manualExpense.amount} onChange={e=>setManualExpense({...manualExpense,amount:e.target.value})} className={`w-1/3 px-3 py-3 rounded-xl border outline-none text-sm ${theme.inputBg} ${theme.textMain}`} />
+                          <input type="text" placeholder={expenseType==='out' ? "消费备注" : "收入来源"} value={manualExpense.desc} onChange={e=>setManualExpense({...manualExpense,desc:e.target.value})} onKeyDown={e=>e.key==='Enter'&&handleManualExpenseAdd()} className={`w-2/3 px-3 py-3 rounded-xl border outline-none text-sm ${theme.inputBg} ${theme.textMain}`} />
+                          <button onClick={handleManualExpenseAdd} className={`px-4 py-3 text-white rounded-xl font-bold shadow-sm active:scale-95 transition-transform ${expenseType==='in' ? 'bg-green-600' : 'bg-blue-600'}`}><Plus className="w-5 h-5"/></button>
+                       </div>
+                    </div>
+                    <div>
+                       <h3 className={`text-xs font-bold mb-3 mt-6 ${theme.textSub}`}>本月明细</h3>
+                       <div className="space-y-2">
+                          {currentMonthExpenseList.map((exp, i) => {
+                             if (!exp || typeof exp !== 'object') return null;
+                             const amt = Number(exp.amount || 0).toFixed(2);
+                             const isIncome = exp.type === 'in';
+                             return (
+                               <div key={exp.id || i} className={`flex items-center justify-between p-4 rounded-2xl border ${isDarkMode?'bg-[#0f212e] border-[#213743]':'bg-white border-gray-200'}`}>
+                                  <div className="flex items-center gap-3">
+                                     <div className={`w-10 h-10 rounded-full flex items-center justify-center ${isIncome ? 'bg-green-500/10 text-green-500' : 'bg-gray-500/10 ' + theme.textMain}`}>
+                                        {isIncome ? <TrendingUp className="w-5 h-5"/> : <TrendingDown className="w-5 h-5"/>}
+                                     </div>
+                                     <div>
+                                        <div className={`font-bold ${theme.textMain}`}>{exp.desc || '未命名'}</div>
+                                        <div className={`text-xs ${theme.textSub}`}>{exp.date || ''} {exp.time || ''}</div>
+                                     </div>
+                                  </div>
+                                  <div className="flex items-center gap-3">
+                                     <span className={`font-mono text-lg font-bold ${isIncome ? 'text-green-500' : 'text-red-500'}`}>
+                                       {isIncome ? '+' : '-'}¥{amt}
+                                     </span>
+                                     <button onClick={()=>handleDeleteExpense(`${systemYear}-${String(viewMonth).padStart(2,'0')}`, exp.id)} className={`p-1.5 rounded-lg ${theme.hoverRow} text-red-400 hover:text-red-500`}><Trash2 className="w-4 h-4"/></button>
+                                  </div>
+                               </div>
+                             );
+                          })}
+                       </div>
+                    </div>
+                 </div>
+               </div>
+            </div>
+          )}
+
+          {showClientModal && (
+            <div className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200" onClick={(e) => { if(e.target === e.currentTarget) { setShowClientModal(false); setIsClientAuth(false); setActiveClientForFollowUp(null); } }}>
+              <div className={`${theme.modalBg} rounded-t-[2rem] sm:rounded-[2rem] w-full max-w-3xl h-[90vh] sm:h-[85vh] shadow-2xl flex flex-col transform transition-transform ${isDarkMode ? 'border border-[#213743]' : 'border border-gray-200'}`}>
+                <div className={`p-4 md:p-5 border-b flex flex-col gap-4 ${isDarkMode ? 'border-[#213743]' : 'border-gray-200'}`}>
+                   <div className="flex justify-between items-center">
+                       <div className="flex items-center gap-3">
+                         {activeClientForFollowUp ? (
+                           <button onClick={() => setActiveClientForFollowUp(null)} className={`p-2 rounded-full transition-all ${isDarkMode ? 'hover:bg-white/10 text-white' : 'hover:bg-black/5 text-gray-800'}`}>
+                             <ArrowLeft className="w-5 h-5" />
+                           </button>
+                         ) : (
+                           <div className={`p-2.5 rounded-xl ${isDarkMode ? 'bg-purple-500/20 text-purple-400' : 'bg-purple-50 text-purple-600'}`}>
+                             {isClientAuth ? <Unlock className="w-5 h-5" /> : <Lock className="w-5 h-5" />}
+                           </div>
+                         )}
+                         <div>
+                           <h2 className={`text-base md:text-lg font-bold tracking-tight ${theme.textMain}`}>
+                             {activeClientForFollowUp ? '客户跟进详情' : '私密客户管理中心'}
+                           </h2>
+                         </div>
+                       </div>
+                       <div className="flex items-center gap-1 md:gap-2">
+                         {isClientAuth && !activeClientForFollowUp && crmTab === 'list' && (
+                           <button onClick={handleExportData} className={`p-2 rounded-xl flex items-center gap-2 text-xs font-bold transition-all ${isDarkMode ? 'bg-[#213743] hover:bg-[#2f4553] text-[#b1bad3]' : 'bg-gray-100 hover:bg-gray-200 text-gray-700'}`}>
+                             <DownloadCloud className="w-4 h-4" /> <span className="hidden md:inline">导出</span>
+                           </button>
+                         )}
+                         <button onClick={() => { setShowClientModal(false); setIsClientAuth(false); setActiveClientForFollowUp(null); }} className={`p-2 rounded-full ${theme.hoverRow}`}>
+                           <X className={`w-5 h-5 ${theme.textSub}`} />
+                         </button>
+                       </div>
+                   </div>
+                   {isClientAuth && !activeClientForFollowUp && (
+                     <div className={`flex p-1 rounded-xl w-full sm:w-max ${isDarkMode ? 'bg-[#0f212e] border border-[#213743]' : 'bg-gray-100 border border-gray-200'}`}>
+                        <button onClick={()=>setCrmTab('list')} className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-2 rounded-lg text-sm font-bold transition-all ${crmTab === 'list' ? (isDarkMode ? 'bg-[#213743] text-white shadow' : 'bg-white text-gray-900 shadow') : theme.textSub}`}><List className="w-4 h-4"/> 客户列表</button>
+                        <button onClick={()=>setCrmTab('add')} className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-2 rounded-lg text-sm font-bold transition-all ${crmTab === 'add' ? 'bg-purple-600 text-white shadow' : theme.textSub}`}><UserPlus2 className="w-4 h-4"/> 新增录入</button>
+                     </div>
+                   )}
+                </div>
+
+                <div className="p-4 md:p-6 overflow-y-auto flex-1">
+                  {!isClientAuth ? (
+                    <div className="flex flex-col items-center justify-center py-12 space-y-6">
+                      <Lock className={`w-16 h-16 ${isDarkMode ? 'text-[#213743]' : 'text-gray-200'}`} />
+                      <div className={`flex flex-col sm:flex-row gap-2 transition-transform duration-300 w-full max-w-xs ${pwdErrorShake ? 'translate-x-[-10px] sm:animate-[shake_0.5s_ease-in-out]' : ''}`}>
+                        <input type="password" placeholder="解锁密码" value={clientPwdInput} onChange={(e) => setClientPwdInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleClientAuth()} className={`w-full px-4 py-3 rounded-xl border outline-none text-center tracking-widest font-mono ${theme.inputBg} ${theme.textMain}`} />
+                        <button onClick={handleClientAuth} className="px-6 py-3 bg-purple-600 text-white font-bold rounded-xl shadow-md">解锁</button>
+                      </div>
+                    </div>
+                  ) : activeClientForFollowUp ? (
+                    <div className="space-y-6">
+                      <div className={`p-4 md:p-5 rounded-2xl border ${isDarkMode ? 'bg-[#0f212e] border-[#213743]' : 'bg-gray-50 border-gray-200'} flex flex-col md:flex-row gap-4 justify-between items-start md:items-center relative overflow-hidden`}>
+                        {activeClientForFollowUp.level === 'S' && <div className="absolute top-0 left-0 w-1.5 h-full bg-yellow-500"></div>}
+                        <div>
+                          <div className={`text-xl font-bold ${theme.textMain} flex items-center gap-2 mb-2`}>
+                            {activeClientForFollowUp.name}
+                            <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${activeClientForFollowUp.level === 'S' ? 'bg-yellow-500/20 text-yellow-600' : 'bg-gray-500/20 text-gray-600'}`}>
+                               {activeClientForFollowUp.level}级
+                            </span>
+                          </div>
+                          <div className={`text-sm ${theme.textSub}`}>
+                            <Phone className="w-3.5 h-3.5 inline mr-1" /> {activeClientForFollowUp.phone} {activeClientForFollowUp.location && `[${activeClientForFollowUp.location}]`}
+                          </div>
+                        </div>
+                      </div>
+                      <div>
+                        <h3 className={`text-sm font-bold mb-4 flex items-center gap-2 ${theme.textMain}`}><History className="w-4 h-4 text-purple-500" /> 跟进记录</h3>
+                        <div className="flex flex-col sm:flex-row gap-2 mb-6">
+                          <input type="text" placeholder="输入跟进情况..." value={newFollowUp} onChange={(e) => setNewFollowUp(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleAddFollowUp(activeClientForFollowUp.id)} className={`flex-1 px-4 py-3 rounded-xl border outline-none ${theme.inputBg} ${theme.textMain}`} />
+                          <button onClick={() => handleAddFollowUp(activeClientForFollowUp.id)} className="px-5 py-3 bg-purple-600 text-white font-bold rounded-xl flex items-center justify-center gap-2 sm:w-auto w-full"><Plus className="w-4 h-4" /> 记录</button>
+                        </div>
+                        <div className="space-y-3">
+                          {(activeClientForFollowUp.followUps || []).map((fu, idx) => (
+                            <div key={fu.id || idx} className={`p-4 rounded-2xl border ${isDarkMode ? 'bg-[#0f212e] border-[#213743]' : 'bg-white border-gray-200'} shadow-sm`}>
+                                <div className="flex items-center justify-between mb-1">
+                                  <time className={`text-xs font-bold font-mono ${isDarkMode ? 'text-purple-400' : 'text-purple-600'}`}>{fu.date}</time>
+                                  <button onClick={() => handleDeleteFollowUp(activeClientForFollowUp.id, fu.id)} className="text-red-400"><Trash2 className="w-3.5 h-3.5" /></button>
+                                </div>
+                                <div className={`text-sm ${theme.textMain}`}>{fu.text}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  ) : crmTab === 'add' ? (
+                    <div className="max-w-xl mx-auto space-y-6">
+                      <div className={`p-6 rounded-3xl border shadow-lg ${isDarkMode ? 'bg-[#0f212e] border-[#213743]' : 'bg-white border-gray-200'}`}>
+                        <div className="space-y-4">
+                          <input type="text" placeholder="客户姓名*" value={newClient.name} onChange={e => setNewClient({...newClient, name: e.target.value})} className={`w-full px-4 py-3 rounded-xl border outline-none text-sm ${theme.inputBg} ${theme.textMain}`} />
+                          <input type="tel" placeholder="手机号码" value={newClient.phone} onChange={handlePhoneChange} className={`w-full px-4 py-3 rounded-xl border outline-none text-sm ${theme.inputBg} ${theme.textMain}`} />
+                          <select value={newClient.level} onChange={e => setNewClient({...newClient, level: e.target.value})} className={`w-full px-4 py-3 rounded-xl border outline-none text-sm ${theme.inputBg} ${theme.textMain}`}>
+                            <option value="S">S级 (重点)</option>
+                            <option value="A">A级 (意向)</option>
+                            <option value="B">B级 (普通)</option>
+                            <option value="C">C级 (无效)</option>
+                          </select>
+                          <button onClick={handleAddClient} className="w-full py-3.5 bg-purple-600 text-white text-lg font-bold rounded-xl shadow-lg">完成录入</button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {clients.map(client => (
+                        <div key={client.id} onClick={() => setActiveClientForFollowUp(client)} className={`flex items-center justify-between p-4 rounded-2xl border cursor-pointer ${client.level === 'S' ? (isDarkMode ? 'border-yellow-600 bg-yellow-900/10' : 'border-yellow-400 bg-yellow-50') : (isDarkMode ? 'bg-[#0f212e] border-[#213743]' : 'bg-white border-gray-200')}`}>
+                          <div className="flex items-center gap-4">
+                            <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold bg-purple-500 text-white`}>{client.name.charAt(0)}</div>
+                            <div>
+                              <div className={`font-bold ${theme.textMain}`}>{client.name}</div>
+                              <div className={`text-xs ${theme.textSub}`}>{client.phone}</div>
+                            </div>
+                          </div>
+                          <ChevronRight className={`w-4 h-4 ${theme.textSub}`} />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {investModal.show && (
+            <div className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={(e) => { if(e.target === e.currentTarget) setInvestModal({show:false, date:'', val:''}); }}>
+              <div className={`${theme.modalBg} p-6 rounded-[2rem] w-full max-w-xs shadow-2xl flex flex-col transform border ${isDarkMode ? 'border-[#213743]' : 'border-gray-200'}`}>
+                <h3 className={`text-lg font-bold mb-4 flex items-center gap-2 ${theme.textMain}`}>录入 {investModal.date} 盈亏</h3>
+                <input type="number" value={investModal.val} onChange={e=>setInvestModal({...investModal, val: e.target.value})} className={`w-full px-4 py-3 rounded-xl border outline-none mb-6 text-center text-lg font-bold ${theme.inputBg} ${theme.textMain}`} autoFocus />
+                <button onClick={saveInvest} className="py-3 rounded-xl bg-red-600 text-white font-bold">保存</button>
+              </div>
+            </div>
+          )}
+
+          {showPortfolioModal && (
+            <div className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={(e) => { if(e.target === e.currentTarget) setShowPortfolioModal(false); }}>
+              <div className={`${theme.modalBg} p-6 rounded-[2rem] w-full max-w-sm shadow-2xl flex flex-col border ${isDarkMode ? 'border-[#213743]' : 'border-gray-200'}`}>
+                <h3 className={`text-lg font-bold mb-4 ${theme.textMain}`}>录入持仓</h3>
+                <div className="space-y-4 mb-6">
+                   <input type="text" placeholder="代码(如: sh600519)" value={newPosition.code} onChange={e=>setNewPosition({...newPosition, code: e.target.value})} className={`w-full px-4 py-3 rounded-xl border outline-none ${theme.inputBg} ${theme.textMain}`} />
+                   <input type="number" placeholder="数量" value={newPosition.quantity} onChange={e=>setNewPosition({...newPosition, quantity: e.target.value})} className={`w-full px-4 py-3 rounded-xl border outline-none ${theme.inputBg} ${theme.textMain}`} />
+                   <input type="number" placeholder="成本价" value={newPosition.costPrice} onChange={e=>setNewPosition({...newPosition, costPrice: e.target.value})} className={`w-full px-4 py-3 rounded-xl border outline-none ${theme.inputBg} ${theme.textMain}`} />
+                </div>
+                <button onClick={handleAddPosition} className="py-3 rounded-xl bg-red-600 text-white font-bold">保存录入</button>
+              </div>
+            </div>
+          )}
+
+          {showCalc && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={(e) => { if(e.target === e.currentTarget) setShowCalc(false); }}>
+              <div className={`${theme.modalBg} p-5 rounded-[2rem] w-full max-w-xs shadow-2xl flex flex-col border ${isDarkMode ? 'border-[#213743]' : 'border-gray-200'}`}>
+                <div className={`w-full h-16 rounded-xl mb-4 px-4 flex items-center justify-end text-3xl font-black font-mono overflow-x-auto ${isDarkMode?'bg-[#0f212e] text-white':'bg-gray-100 text-gray-900'}`}>
+                   {calcInput}
+                </div>
+                <div className="grid grid-cols-4 gap-2">
+                   {['C','DEL','%','÷','7','8','9','×','4','5','6','-','1','2','3','+','00','0','.','='].map((btn, i) => (
+                      <button key={i} onClick={() => handleCalcBtn(btn)} className={`h-12 rounded-xl text-lg font-bold shadow-sm ${['÷','×','-','+','='].includes(btn) ? 'bg-orange-500 text-white' : (isDarkMode?'bg-[#1a2c38] text-white':'bg-white text-gray-900 border')}`}>
+                         {btn}
+                      </button>
+                   ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {showDataAuthModal && (
+            <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={(e) => { if(e.target === e.currentTarget) { setShowDataAuthModal(false); setPendingAction(null); setDataAuthPwd(''); } }}>
+              <div className={`${theme.modalBg} p-6 rounded-[2rem] w-full max-w-sm shadow-2xl flex flex-col items-center border ${isDarkMode ? 'border-[#213743]' : 'border-gray-200'}`}>
+                <div className={`p-4 rounded-full mb-4 ${isDarkMode ? 'bg-red-500/20 text-red-500' : 'bg-red-100 text-red-600'}`}>
+                  <Lock className="w-8 h-8" />
+                </div>
+                <h2 className={`text-xl font-bold mb-2 ${theme.textMain}`}>操作权限验证</h2>
+                <p className={`text-xs text-center mb-6 ${theme.textSub}`}>请输入操作密码解锁编辑权限</p>
+                <div className={`w-full flex ${authErrorShake ? 'animate-[shake_0.5s_ease-in-out]' : ''}`}>
+                   <input type="password" placeholder="操作密码" value={dataAuthPwd} onChange={(e) => setDataAuthPwd(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleDataAuthSubmit()} className={`flex-1 px-4 py-3 rounded-l-xl border outline-none text-center ${theme.inputBg} ${theme.textMain}`} />
+                   <button onClick={handleDataAuthSubmit} className="px-6 py-3 bg-red-600 text-white font-bold rounded-r-xl">验证</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    };
+
+    const HabitGrid = ({ label, target, list, onToggle, theme, color, icon }) => {
+      const slots = Array.from({ length: target === 8 ? 8 : 31 }, (_, i) => i + 1);
+      const current = list ? list.filter(Boolean).length : 0;
+      const progress = Math.min(100, Math.round((current / target) * 100));
+      return (
+        <div className={`p-4 rounded-[1.5rem] border border-transparent transition-all ${theme.isDark ? 'bg-black/10' : 'bg-slate-50/50'}`}>
+          <div className="flex justify-between items-center mb-2">
+            <span className={`text-xs font-black uppercase tracking-widest flex items-center gap-1.5 ${theme.textSub}`}>{icon} {label}</span>
+            <span className={`text-sm font-bold ${theme.textMain}`}>{current} <span className={`text-[10px] ${theme.textSub}`}>/ {target}</span></span>
+          </div>
+          <div className={`w-full h-1.5 rounded-full overflow-hidden mb-4 ${theme.isDark ? 'bg-black/30' : 'bg-slate-200'}`}>
+             <div className="h-full transition-all duration-700" style={{ width: `${progress}%`, backgroundColor: color }} />
+          </div>
+          <div className={`grid ${target === 8 ? 'grid-cols-4' : 'grid-cols-7'} gap-1.5`}>
+            {slots.map(num => {
+              const isSel = list ? list[num-1] : false;
+              return (
+                <div key={num} onClick={() => onToggle(num - 1)} className={`h-8 rounded-xl flex items-center justify-center text-[10px] font-black cursor-pointer transition-all duration-300 ${isSel ? 'scale-105 shadow-lg' : theme.habitBox}`} style={{ backgroundColor: isSel ? color : '', color: isSel ? (theme.isDark ? '#0f212e' : 'white') : theme.calendarNum }}>
+                  {isSel ? '✓' : num}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      );
+    };
+
+    const root = createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
