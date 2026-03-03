@@ -117,7 +117,7 @@
       const [isDarkMode, setIsDarkMode] = useState(() => new Date().getHours() >= 19 || new Date().getHours() < 7);
       const [currentTime, setCurrentTime] = useState(new Date());
       const [user, setUser] = useState(null);
-      const [loading, setLoading] = useState(false);
+      const [loading, setLoading] = useState(true);
       const [currentMotto, setCurrentMotto] = useState("");
 
       const systemMonth = currentTime.getMonth() + 1;
@@ -126,14 +126,14 @@
       const [activeWeek, setActiveWeek] = useState(0);
       const [usdToCnyRate, setUsdToCnyRate] = useState(7.20);
 
-      const [allMonthData, setAllMonthData] = useState({});
-      const [tasksCompleted, setTasksCompleted] = useState({});
-      const [clients, setClients] = useState([]);
-      const [investments, setInvestments] = useState({ A: { initialCapital: 1000000, records: {} }, US: { initialCapital: 100000, records: {} } });
-      const [expenses, setExpenses] = useState({}); 
-      const [portfolio, setPortfolio] = useState([]); 
-      const [showPortfolioDetails, setShowPortfolioDetails] = useState(false);
+      const [allMonthData, setAllMonthData] = useState(() => JSON.parse(localStorage.getItem('allMonthData') || '{}'));
+      const [tasksCompleted, setTasksCompleted] = useState(() => JSON.parse(localStorage.getItem('tasksCompleted') || '{}'));
+      const [clients, setClients] = useState(() => JSON.parse(localStorage.getItem('clients') || '[]'));
+      const [investments, setInvestments] = useState(() => JSON.parse(localStorage.getItem('investments') || JSON.stringify({ A: { initialCapital: 1000000, records: {} }, US: { initialCapital: 100000, records: {} } })));
+      const [expenses, setExpenses] = useState(() => JSON.parse(localStorage.getItem('expenses') || '{}'));
+      const [portfolio, setPortfolio] = useState(() => JSON.parse(localStorage.getItem('portfolio') || '[]')); 
       
+      const [showPortfolioDetails, setShowPortfolioDetails] = useState(false);
       const [editAuthTime, setEditAuthTime] = useState(0);
       const [showDataAuthModal, setShowDataAuthModal] = useState(false);
       const [dataAuthPwd, setDataAuthPwd] = useState('');
@@ -158,7 +158,6 @@
       const [manualExpense, setManualExpense] = useState({ amount: '', desc: '' });
       const [investTab, setInvestTab] = useState('daily'); 
       const [investMarket, setInvestMarket] = useState('A');
-      const [stageDates, setStageDates] = useState({ start: getTodayDateString(), end: getTodayDateString() });
       const [investModal, setInvestModal] = useState({ show: false, date: '', val: '' });
       const [isClientAuth, setIsClientAuth] = useState(false);
       const [clientPwdInput, setClientPwdInput] = useState('');
@@ -168,6 +167,20 @@
       const [activeClientForFollowUp, setActiveClientForFollowUp] = useState(null);
       const [newFollowUp, setNewFollowUp] = useState('');
       const queryTimeoutRef = useRef(null);
+
+      const saveData = async (newData) => {
+        if (newData.tasksCompleted !== undefined) { setTasksCompleted(newData.tasksCompleted); localStorage.setItem('tasksCompleted', JSON.stringify(newData.tasksCompleted)); }
+        if (newData.allMonthData !== undefined) { setAllMonthData(newData.allMonthData); localStorage.setItem('allMonthData', JSON.stringify(newData.allMonthData)); }
+        if (newData.clients !== undefined) { setClients(newData.clients); localStorage.setItem('clients', JSON.stringify(newData.clients)); }
+        if (newData.investments !== undefined) { setInvestments(newData.investments); localStorage.setItem('investments', JSON.stringify(newData.investments)); }
+        if (newData.expenses !== undefined) { setExpenses(newData.expenses); localStorage.setItem('expenses', JSON.stringify(newData.expenses)); }
+        if (newData.portfolio !== undefined) { setPortfolio(newData.portfolio); localStorage.setItem('portfolio', JSON.stringify(newData.portfolio)); }
+
+        if (user && db) {
+          try { await setDoc(doc(db, 'artifacts', appId || 'local', 'users', user.uid, 'dashboard', 'data_pro_v5'), newData, { merge: true }); } 
+          catch (e) { console.warn("Cloud Sync Delayed", e); }
+        }
+      };
 
       const handleCalcBtn = (val) => {
          if(val === 'C') { setCalcInput('0'); }
@@ -298,7 +311,7 @@
       useEffect(() => { setCurrentMotto(MOTTO_LIST[Math.floor(Math.random() * MOTTO_LIST.length)]); const t = setInterval(() => setCurrentTime(new Date()), 1000); return () => clearInterval(t); }, []);
 
       useEffect(() => {
-        if (!auth) return; setLoading(true);
+        if (!auth) { setLoading(false); return; }
         const initAuth = async () => {
           try { 
             if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) await signInWithCustomToken(auth, __initial_auth_token);
@@ -316,29 +329,17 @@
         const unsubscribeSnap = onSnapshot(colRef, (snap) => {
           if (snap.exists()) {
             const d = snap.data();
-            if (d.allMonthData) setAllMonthData(d.allMonthData);
-            if (d.tasksCompleted) setTasksCompleted(d.tasksCompleted);
-            if (d.clients) setClients(d.clients);
-            if (d.portfolio) setPortfolio(d.portfolio); 
-            if (d.investments) setInvestments(d.investments);
-            if (d.expenses) setExpenses(d.expenses);
+            if (d.allMonthData) { setAllMonthData(d.allMonthData); localStorage.setItem('allMonthData', JSON.stringify(d.allMonthData)); }
+            if (d.tasksCompleted) { setTasksCompleted(d.tasksCompleted); localStorage.setItem('tasksCompleted', JSON.stringify(d.tasksCompleted)); }
+            if (d.clients) { setClients(d.clients); localStorage.setItem('clients', JSON.stringify(d.clients)); }
+            if (d.portfolio) { setPortfolio(d.portfolio); localStorage.setItem('portfolio', JSON.stringify(d.portfolio)); }
+            if (d.investments) { setInvestments(d.investments); localStorage.setItem('investments', JSON.stringify(d.investments)); }
+            if (d.expenses) { setExpenses(d.expenses); localStorage.setItem('expenses', JSON.stringify(d.expenses)); }
           }
           setLoading(false);
         }, () => setLoading(false));
         return () => unsubscribeSnap();
       }, [user]);
-
-      const saveData = async (newData) => {
-        if (newData.tasksCompleted) setTasksCompleted(newData.tasksCompleted);
-        if (newData.allMonthData) setAllMonthData(newData.allMonthData);
-        if (newData.clients) setClients(newData.clients);
-        if (newData.investments) setInvestments(newData.investments);
-        if (newData.expenses) setExpenses(newData.expenses);
-        if (newData.portfolio) setPortfolio(newData.portfolio);
-        if (!user || !db) return; 
-        try { await setDoc(doc(db, 'artifacts', appId || 'local', 'users', user.uid, 'dashboard', 'data_pro_v5'), newData, { merge: true }); } 
-        catch (e) { console.error("Cloud Save Failed", e); }
-      };
 
       const requireAuth = (actionFn) => {
         return (...args) => {
@@ -576,7 +577,7 @@
         <div className={`min-h-screen relative overflow-x-hidden ${theme.bg} transition-all duration-1000 pb-20`}>
           <div className="fixed inset-0 pointer-events-none opacity-[0.03] z-0" style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E")` }}></div>
 
-          <div className="max-w-6xl mx-auto space-y-5 md:space-y-6 relative z-10 pt-6 md:pt-10 px-3 md:px-6">
+          <div className="max-w-6xl mx-auto space-y-5 md:space-y-6 relative z-10 pt-12 md:pt-24 px-3 md:px-6">
             <header className="flex flex-col xl:flex-row xl:justify-between items-center xl:items-start gap-4 w-full">
               <div className="flex flex-col items-center xl:items-start gap-3 w-full xl:w-auto">
                 <div className="relative group flex items-center gap-4 cursor-pointer">
@@ -650,7 +651,7 @@
                   </div>
                 );
               })}
-              <div className={`${theme.card} rounded-[1.5rem] p-4 shadow-lg relative overflow-hidden flex flex-col justify-between ${isDarkMode ? 'border-orange-500/30' : 'border-orange-400'}`}>
+              <div className={`${theme.card} rounded-[1.5rem] p-4 shadow-lg relative overflow-hidden flex flex-col justify-between`}>
                  <div className="flex justify-between items-center mb-3">
                     <div className="flex items-center gap-2">
                        <div className={`p-2 rounded-xl shadow-inner ${isDarkMode ? 'bg-orange-500/20 text-orange-500' : 'bg-orange-50 text-orange-600'}`}><Wallet className="w-5 h-5"/></div>
@@ -677,7 +678,7 @@
                    <div className="flex items-center justify-between px-2 pb-3 pt-1">
                      <h2 className={`text-sm font-bold flex items-center gap-2 ${theme.textMain}`}><Zap className={`w-4 h-4 ${isDarkMode ? 'text-[#34c759]' : 'text-[#0071e3]'} fill-current`} /> 执行周报</h2>
                      <div className={`rounded-xl p-0.5 flex shadow-sm ${isDarkMode ? 'bg-[#1a2c38] border border-[#213743]' : 'bg-white border border-gray-200'}`}>
-                       {["一", "二", "三", "四", "五"].map((l, i) => (
+                       {["一", "二", "三", "四"].map((l, i) => (
                          <button key={i} onClick={() => setActiveWeek(i)} className={`px-4 py-1.5 rounded-lg text-[10px] font-black transition-all ${activeWeek === i ? (isDarkMode ? 'bg-[#34c759] text-[#0f212e]' : 'bg-[#0071e3] text-white shadow-md') : `${theme.textSub} hover:opacity-100`}`}>第{l}周</button>
                        ))}
                      </div>
@@ -957,14 +958,14 @@
                            {(activeClientForFollowUp.followUps || []).map((fu, idx) => (
                              <div key={fu.id || idx} className={`p-4 rounded-xl border ${isDarkMode?'bg-white/5 border-white/10':'bg-white border-gray-200 shadow-sm'}`}>
                                 <div className="flex justify-between text-xs mb-1"><time className="font-mono text-purple-400">{fu.date}</time><button onClick={()=>handleDeleteFollowUp(activeClientForFollowUp.id, fu.id)} className="text-red-400"><Trash2 className="w-3.5 h-3.5"/></button></div>
-                                <div className={`text-sm ${theme.textMain}`}>{fu.text}</div>
-                             </div>
-                           ))}
-                        </div>
-                    </div>
-                  ) : crmTab === 'add' ? (
-                    <div className="space-y-4 max-w-md mx-auto">
-                        <div className="flex flex-col gap-1">
+                        <div className={`text-sm ${theme.textMain}`}>{fu.text}</div>
+                      </div>
+                    ))}
+                 </div>
+             </div>
+           ) : crmTab === 'add' ? (
+             <div className="space-y-4 max-w-md mx-auto">
+                 <div className="flex flex-col gap-1">
                           <label className={`text-xs font-bold px-1 ${theme.textSub}`}>录入日期</label>
                           <input type="date" value={newClient.date} onChange={e => setNewClient({...newClient, date: e.target.value})} className={`w-full px-4 py-3 rounded-xl border ${theme.inputBg} ${theme.textMain}`} />
                         </div>
@@ -1007,7 +1008,7 @@
           )}
 
           {showPortfolioModal && (
-            <div className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-black/60" onClick={(e) => { if(e.target === e.currentTarget) setShowPortfolioModal(false); }}>
+            <div className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-black/60" onClick={(e) => { if(e.target === e.currentTarget) { setShowPortfolioModal(false); } }}>
               <div className={`${theme.modalBg} p-6 rounded-[2rem] w-full max-w-sm shadow-2xl border ${isDarkMode ? 'border-[#213743]' : ''}`}>
                 <h3 className={`text-lg font-bold mb-4 ${theme.textMain}`}>录入持仓</h3>
                 <div className="space-y-4 mb-6">
