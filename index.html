@@ -54,7 +54,7 @@
       CloudRain, Wind, Droplets, ThermometerSun, Palmtree, Snowflake, Leaf, Flower2,
       Lock, Unlock, Plus, Minus, History, ArrowLeft, Phone, Calendar, Trash2, Edit2, AlertCircle, Star, BellRing, DownloadCloud, Cake,
       Wallet, Receipt, TrendingUp, TrendingDown, Share, Settings, Wand2, Film, PlayCircle,
-      Activity, Globe, ExternalLink, List, UserPlus2, PieChart, Eye, EyeOff, Cloud, Key
+      Activity, Globe, ExternalLink, List, UserPlus2, PieChart, Eye, EyeOff, Cloud, Key, UploadCloud, Image
     } = LucideIcons;
 
     // --- 核心修改区：直接固化你的专属配置 ---
@@ -177,6 +177,8 @@
       const [expenseType, setExpenseType] = useState('out');
       const [newExpenseText, setNewExpenseText] = useState('');
       const [manualExpense, setManualExpense] = useState({ amount: '', desc: '' });
+      const [isRecognizing, setIsRecognizing] = useState(false);
+      const [recognizeStatus, setRecognizeStatus] = useState('');
       const [investTab, setInvestTab] = useState('daily'); 
       const [investMarket, setInvestMarket] = useState('A');
       const [investModal, setInvestModal] = useState({ show: false, date: '', val: '' });
@@ -258,7 +260,6 @@
           .catch(() => console.log('使用默认汇率 7.2'));
       }, []);
 
-      // 核心修复：解决美股（如 ussoxl）数据抓取和大小写识别的痛点
       useEffect(() => {
          const fetchStocks = () => {
              const baseCodes = [...new Set([...portfolio.map(p => p.code), 'sh000001', 'usDJI'])];
@@ -552,6 +553,119 @@
          saveData({ expenses: { ...expenses, [monthKey]: [newRecord, ...currentMonthExp] } });
       };
 
+      // 批量导入 AI 识别的账单
+      const handleBulkExpenseImport = (items) => {
+          let nextExpenses = { ...expenses };
+          let count = 0;
+          items.forEach(item => {
+              if(!item.date || !item.amount) return;
+              const [year, month, day] = item.date.split('-');
+              if (!year || !month) return;
+
+              const monthKey = `${year}-${month.padStart(2, '0')}`;
+              const newRecord = {
+                  id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
+                  date: item.date,
+                  amount: Number(item.amount),
+                  desc: item.desc || '账单导入',
+                  type: item.type === 'in' ? 'in' : 'out',
+                  time: item.time || '12:00'
+              };
+              
+              if (!Array.isArray(nextExpenses[monthKey])) nextExpenses[monthKey] = [];
+              nextExpenses[monthKey] = [newRecord, ...nextExpenses[monthKey]];
+              count++;
+          });
+          
+          if (count > 0) saveData({ expenses: nextExpenses });
+          return count;
+      };
+
+      // AI 视觉解析账单图片核心逻辑
+      const handleImageUpload = async (e) => {
+          const file = e.target.files[0];
+          if (!file) return;
+
+          setIsRecognizing(true);
+          setRecognizeStatus('正在读取图片...');
+
+          try {
+              const reader = new FileReader();
+              reader.readAsDataURL(file);
+              reader.onload = async () => {
+                  const base64Data = reader.result.split(',')[1];
+                  const mimeType = file.type;
+
+                  setRecognizeStatus('AI 正在深度解析账单明细...');
+
+                  const apiKey = ""; // 环境自动注入
+                  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+
+                  const prompt = `你是一个专业的财务账单识别助手。请从这张账单截图中提取所有的交易记录。
+如果是微信或支付宝的账单，请注意正负号（负号或没有符号通常是支出 out，正号是收入 in）。
+如果没有年份信息，请默认使用当前系统年份 ${systemYear} 年。如果账单上有年份（如"2026年3月"），请优先使用账单上的年份。
+JSON 字段要求：
+- desc: 交易描述/商家名称 (字符串)
+- amount: 金额绝对值 (数字，不要带正负号)
+- type: "in" (收入) 或 "out" (支出)
+- date: 日期，严格按照格式 YYYY-MM-DD (字符串)
+- time: 时间，格式 HH:mm (字符串)
+
+示例输出必须是严格的JSON数组：
+[
+  {"desc": "成都好居有幸", "amount": 124.00, "type": "out", "date": "2026-03-03", "time": "14:11"},
+  {"desc": "转账-退款", "amount": 8000.00, "type": "in", "date": "2026-03-02", "time": "01:59"}
+]`;
+
+                  const payload = {
+                      contents: [{ role: "user", parts: [{ text: prompt }, { inlineData: { mimeType: mimeType, data: base64Data } }] }],
+                      generationConfig: { responseMimeType: "application/json" }
+                  };
+
+                  let retries = 3;
+                  let delay = 1000;
+                  let result = null;
+
+                  while (retries > 0) {
+                      try {
+                          const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                          if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                          result = await response.json();
+                          break; 
+                      } catch (error) {
+                          retries--;
+                          if (retries === 0) throw error;
+                          await new Promise(r => setTimeout(r, delay));
+                          delay *= 2;
+                      }
+                  }
+
+                  if (result && result.candidates && result.candidates.length > 0) {
+                      const jsonText = result.candidates[0].content.parts[0].text;
+                      try {
+                          const parsedData = JSON.parse(jsonText);
+                          if (Array.isArray(parsedData) && parsedData.length > 0) {
+                              const count = handleBulkExpenseImport(parsedData);
+                              setRecognizeStatus(`太棒了！成功导入 ${count} 笔记录 🎉`);
+                          } else {
+                              setRecognizeStatus('未在图片中识别到有效的账单数据。');
+                          }
+                      } catch (e) {
+                           setRecognizeStatus('AI 返回的数据格式解析失败。');
+                      }
+                  } else {
+                      setRecognizeStatus('网络或识别失败，请重试。');
+                  }
+                  
+                  setTimeout(() => { setIsRecognizing(false); setRecognizeStatus(''); }, 4000);
+              };
+          } catch (error) {
+              console.error("OCR Error:", error);
+              setRecognizeStatus('识别过程发生错误。');
+              setTimeout(() => { setIsRecognizing(false); setRecognizeStatus(''); }, 4000);
+          }
+      };
+
       const handleDeleteExpense = (monthKey, id) => {
          const action = () => {
             const currentMonthExp = Array.isArray(expenses[monthKey]) ? expenses[monthKey] : [];
@@ -583,13 +697,22 @@
           return weeks;
       };
 
-      const formatInvestNum = (num, isRate = false) => {
+      // 修改原有的格式化函数：支持自定义货币符号前缀
+      const formatInvestNum = (num, isRate = false, currencySymbol = '') => {
           if (num === undefined || num === null || isNaN(num)) return '';
           const n = Number(num);
           if (isRate) return (n * 100).toFixed(2) + '%';
-          if (n === 0) return '0.00';
-          if (Math.abs(n) >= 10000) return (n / 10000).toFixed(2) + '万';
-          return n.toFixed(2);
+          
+          const isNegative = n < 0;
+          const absN = Math.abs(n);
+          let formatted = '';
+          
+          if (absN === 0) formatted = '0.00';
+          else if (absN >= 10000) formatted = (absN / 10000).toFixed(2) + '万';
+          else formatted = absN.toFixed(2);
+          
+          // 如果是负数，负号应放在货币符号的最前面（例如 -$438.98）
+          return (isNegative ? '-' : '') + currencySymbol + formatted;
       };
 
       const handleAddPosition = () => {
@@ -878,14 +1001,14 @@
                    {showPortfolioDetails && (
                      <div className="animate-in fade-in slide-in-from-top-2 duration-300">
                         <div className={`grid grid-cols-3 gap-3 md:gap-5 mb-5 p-4 md:p-6 rounded-[1.5rem] border ${isDarkMode ? 'bg-[#0f212e]/50 border-[#213743]' : 'bg-gray-50/50 border-gray-100'}`}>
-                            <div><div className={`text-[10px] md:text-xs font-bold mb-1 ${theme.textSub}`}>总市值</div><div className={`text-lg md:text-2xl font-black font-mono tracking-tighter ${theme.textMain}`}>{formatInvestNum(totalMarketValue)}</div></div>
+                            <div><div className={`text-[10px] md:text-xs font-bold mb-1 ${theme.textSub}`}>总市值 {investMarket === 'US' ? '(美元)' : '(人民币)'}</div><div className={`text-lg md:text-2xl font-black font-mono tracking-tighter ${theme.textMain}`}>{formatInvestNum(totalMarketValue, false, investMarket === 'US' ? '$' : '¥')}</div></div>
                             <div className="border-l border-dashed pl-3 border-gray-300 dark:border-gray-700">
-                                <div className={`text-[10px] md:text-xs font-bold mb-1 ${theme.textSub}`}>今日盈亏</div>
-                                <div className={`text-lg md:text-2xl font-black font-mono tracking-tighter ${todayPnL >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>{formatInvestNum(todayPnL)}</div>
+                                <div className={`text-[10px] md:text-xs font-bold mb-1 ${theme.textSub}`}>今日盈亏 {investMarket === 'US' ? '(美元)' : '(人民币)'}</div>
+                                <div className={`text-lg md:text-2xl font-black font-mono tracking-tighter ${todayPnL >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>{formatInvestNum(todayPnL, false, investMarket === 'US' ? '$' : '¥')}</div>
                             </div>
                             <div className="border-l border-dashed pl-3 border-gray-300 dark:border-gray-700">
-                                <div className={`text-[10px] md:text-xs font-bold mb-1 ${theme.textSub}`}>累计盈亏</div>
-                                <div className={`text-lg md:text-2xl font-black font-mono tracking-tighter ${totalPnL >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>{formatInvestNum(totalPnL)}</div>
+                                <div className={`text-[10px] md:text-xs font-bold mb-1 ${theme.textSub}`}>累计盈亏 {investMarket === 'US' ? '(美元)' : '(人民币)'}</div>
+                                <div className={`text-lg md:text-2xl font-black font-mono tracking-tighter ${totalPnL >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>{formatInvestNum(totalPnL, false, investMarket === 'US' ? '$' : '¥')}</div>
                             </div>
                         </div>
                         <div className="space-y-2 mb-6 relative">
@@ -896,13 +1019,13 @@
                                      <div className={`text-[10px] font-mono mt-0.5 ${theme.textSub}`}>{item.code.toUpperCase()}</div>
                                   </div>
                                   <div className="w-[25%] text-right">
-                                     <div className={`text-xs font-mono font-bold ${item.change >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>{item.price > 0 ? item.price.toFixed(2) : '--'}</div>
-                                     <div className={`text-[9px] mt-0.5 ${theme.textSub}`}>成本 {item.costPrice}</div>
+                                     <div className={`text-xs font-mono font-bold ${item.change >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>{item.price > 0 ? (item.market === 'US' ? '$' : '¥') + item.price.toFixed(2) : '--'}</div>
+                                     <div className={`text-[9px] mt-0.5 ${theme.textSub}`}>成本 {item.market === 'US' ? '$' : '¥'}{item.costPrice}</div>
                                   </div>
                                   <div className="w-[30%] text-right">
-                                     <div className={`text-xs font-mono font-bold ${item.todayItemPnL >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>{formatInvestNum(item.todayItemPnL)}</div>
-                                     <div className={`text-[9px] mt-0.5 font-bold ${theme.textSub}`}>市值 {formatInvestNum(item.mv)}</div>
-                                     <div className={`text-[9px] mt-0.5 font-bold ${item.pnl >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>总盈亏 {formatInvestNum(item.pnl)}</div>
+                                     <div className={`text-xs font-mono font-bold ${item.todayItemPnL >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>{formatInvestNum(item.todayItemPnL, false, item.market === 'US' ? '$' : '¥')}</div>
+                                     <div className={`text-[9px] mt-0.5 font-bold ${theme.textSub}`}>市值 {formatInvestNum(item.mv, false, item.market === 'US' ? '$' : '¥')}</div>
+                                     <div className={`text-[9px] mt-0.5 font-bold ${item.pnl >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>总盈亏 {formatInvestNum(item.pnl, false, item.market === 'US' ? '$' : '¥')}</div>
                                   </div>
                                   <button onClick={() => handleRemovePosition(item.id)} className="text-gray-400 hover:text-red-500"><Trash2 className="w-4 h-4"/></button>
                                </div>
@@ -937,14 +1060,14 @@
                                  return (
                                    <div key={day} className={`border-r border-b flex flex-col items-center justify-center ${isDarkMode ? 'border-[#213743]' : 'border-gray-200'} ${cellBgClass}`}>
                                      <span className={`text-[9px] font-bold ${val!==undefined ? theme.textMain : theme.textSub}`}>{day}</span>
-                                     <span className={`text-[9px] md:text-[11px] font-black tracking-tighter ${cellColorClass}`}>{val !== undefined ? formatInvestNum(val) : ''}</span>
+                                     <span className={`text-[9px] md:text-[11px] font-black tracking-tighter ${cellColorClass}`}>{val !== undefined ? formatInvestNum(val, false, investMarket === 'US' ? '$' : '¥') : ''}</span>
                                    </div>
                                  );
                               })}
                             </div>
                           ))}
                        </div>
-                       <div className={`mt-4 text-xs font-bold ${theme.textMain}`}>当月累计盈亏: <span className={getInvestmentTotal('monthly') >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}>{formatInvestNum(getInvestmentTotal('monthly'))}</span></div>
+                       <div className={`mt-4 text-xs font-bold ${theme.textMain}`}>当月累计盈亏 {investMarket === 'US' ? '(美元)' : '(人民币)'}: <span className={getInvestmentTotal('monthly') >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}>{formatInvestNum(getInvestmentTotal('monthly'), false, investMarket === 'US' ? '$' : '¥')}</span></div>
                      </>
                    )}
 
@@ -961,7 +1084,7 @@
                               <div key={m} className={`flex flex-col p-3 rounded-xl border ${isDarkMode ? 'bg-[#0f212e] border-[#213743]' : 'bg-gray-50 border-gray-100'}`}>
                                 <span className={`text-[10px] font-bold mb-1 ${theme.textSub}`}>{m}月</span>
                                 <span className={`text-sm font-black font-mono ${mTotal > 0 ? theme.redUp.split(' ')[0] : (mTotal < 0 ? theme.greenDown.split(' ')[0] : theme.textMain)}`}>
-                                  {mTotal !== 0 ? formatInvestNum(mTotal) : '--'}
+                                  {mTotal !== 0 ? formatInvestNum(mTotal, false, investMarket === 'US' ? '$' : '¥') : '--'}
                                 </span>
                               </div>
                             );
@@ -970,10 +1093,10 @@
                         <div className={`mt-4 p-4 rounded-2xl flex justify-between items-center shadow-inner ${isDarkMode ? 'bg-[#0f212e]/50 border border-[#213743]' : 'bg-white border border-gray-100'}`}>
                           <div className="flex items-center gap-2">
                              <Target className="w-4 h-4 text-red-500" />
-                             <span className={`text-sm font-bold ${theme.textMain}`}>全年累计盈亏</span>
+                             <span className={`text-sm font-bold ${theme.textMain}`}>全年累计盈亏 {investMarket === 'US' ? '(美元)' : '(人民币)'}</span>
                           </div>
                           <span className={`text-2xl font-black font-mono tracking-tighter ${getInvestmentTotal('yearly') >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>
-                            {formatInvestNum(getInvestmentTotal('yearly'))}
+                            {formatInvestNum(getInvestmentTotal('yearly'), false, investMarket === 'US' ? '$' : '¥')}
                           </span>
                         </div>
                       </div>
@@ -1037,6 +1160,27 @@
                     <button onClick={() => setShowExpenseModal(false)}><X className={`w-5 h-5 ${theme.textSub}`}/></button>
                  </div>
                  <div className="p-5 flex-1 overflow-y-auto space-y-6">
+                    
+                    {/* 新增：AI 视觉账单导入区 */}
+                    <div className={`p-4 rounded-2xl border-2 border-dashed flex flex-col items-center justify-center gap-2 relative overflow-hidden transition-all duration-300 ${isDarkMode ? 'border-[#213743] hover:bg-[#1a2c38]/50' : 'border-blue-200 hover:bg-blue-50/50'} ${isRecognizing ? 'bg-blue-50 dark:bg-[#1a2c38]' : ''}`}>
+                        <input type="file" accept="image/*" onChange={handleImageUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" disabled={isRecognizing} />
+                        {isRecognizing ? (
+                            <div className="flex flex-col items-center gap-3 py-2">
+                                <RefreshCw className="w-8 h-8 text-blue-500 animate-spin" />
+                                <span className={`text-sm font-bold ${theme.textMain} animate-pulse`}>{recognizeStatus}</span>
+                            </div>
+                        ) : (
+                            <div className="flex flex-col items-center pointer-events-none">
+                                <div className="p-3 bg-blue-100 text-blue-600 rounded-full dark:bg-blue-500/20 dark:text-blue-400 mb-2 shadow-sm">
+                                    <UploadCloud className="w-6 h-6" />
+                                </div>
+                                <span className={`text-sm font-bold ${theme.textMain}`}>点击或拖拽上传账单截图</span>
+                                <span className={`text-xs mt-1 font-medium text-blue-500`}>AI 视觉自动识别并导入多笔记录</span>
+                                <span className={`text-[10px] mt-1 ${theme.textSub}`}>支持微信 / 支付宝长截图</span>
+                            </div>
+                        )}
+                    </div>
+
                     <div className={`flex p-1 rounded-xl w-max mx-auto shadow-sm ${isDarkMode ? 'bg-[#0f212e] border border-[#213743]' : 'bg-gray-100 border border-gray-200'}`}>
                        <button onClick={()=>setExpenseType('out')} className={`px-8 py-2 rounded-lg text-sm font-bold ${expenseType==='out' ? 'bg-white text-gray-900 shadow' : theme.textSub}`}>记支出</button>
                        <button onClick={()=>setExpenseType('in')} className={`px-8 py-2 rounded-lg text-sm font-bold ${expenseType==='in' ? 'bg-white text-green-600 shadow' : theme.textSub}`}>记收入</button>
