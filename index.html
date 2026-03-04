@@ -601,10 +601,11 @@
           setIsRecognizing(true);
           setRecognizeStatus('正在读取图片...');
 
-          try {
-              const reader = new FileReader();
-              reader.readAsDataURL(file);
-              reader.onload = async () => {
+          const reader = new FileReader();
+          reader.readAsDataURL(file);
+          
+          reader.onload = async () => {
+              try {
                   const base64Data = reader.result.split(',')[1];
                   const mimeType = file.type;
 
@@ -643,7 +644,10 @@ JSON 字段要求：
                   while (retries > 0) {
                       try {
                           const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-                          if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                          if (!response.ok) {
+                              const errData = await response.json().catch(()=>({}));
+                              throw new Error(errData.error?.message || `HTTP ${response.status}`);
+                          }
                           result = await response.json();
                           break; 
                       } catch (error) {
@@ -672,12 +676,17 @@ JSON 字段要求：
                   }
                   
                   setTimeout(() => { setIsRecognizing(false); setRecognizeStatus(''); }, 4000);
-              };
-          } catch (error) {
-              console.error("OCR Error:", error);
-              setRecognizeStatus('识别过程发生错误。');
+              } catch (error) {
+                  console.error("OCR Error:", error);
+                  setRecognizeStatus('请求失败：请检查网络(国内需全局代理)或API密钥。');
+                  setTimeout(() => { setIsRecognizing(false); setRecognizeStatus(''); }, 5000);
+              }
+          };
+          
+          reader.onerror = () => {
+              setRecognizeStatus('读取图片失败。');
               setTimeout(() => { setIsRecognizing(false); setRecognizeStatus(''); }, 4000);
-          }
+          };
       };
 
       const handleDeleteExpense = (monthKey, id) => {
