@@ -297,10 +297,8 @@
           .catch(() => console.log('使用默认汇率 7.2'));
       }, []);
 
-      // === 股票数据获取逻辑 (A股腾讯 + 美股Finnhub) ===
+      // === 股票数据获取逻辑 (A股腾讯极速版 + 美股雅虎财经原生盘前盘后) ===
       useEffect(() => {
-         const FINNHUB_API_KEY = 'd6k0h3pr01qkvh5rmhcgd6k0h3pr01qkvh5rmhd0';
-         
          const fetchStocks = async () => {
              const baseCodes = [...new Set([...portfolio.map(p => p.code), 'sh000001', 'usDJI'])];
              
@@ -311,7 +309,7 @@
              baseCodes.forEach(code => {
                  let lower = code.toLowerCase();
                  if (lower.startsWith('us')) {
-                     usShareCodes.push(code); // 保持原始代码用于后续匹配
+                     usShareCodes.push(code); // 保持原始代码，如 'usAAPL'
                  } else {
                      if (lower.startsWith('hk')) aShareCodes.push('hk' + lower.slice(2).toUpperCase());
                      else aShareCodes.push(lower);
@@ -320,7 +318,7 @@
 
              const newStockData = [];
 
-             // 1. 获取 A 股数据 (腾讯接口，支持批量，频率可快)
+             // 1. 获取 A 股数据 (腾讯接口，极速无限制)
              if (aShareCodes.length > 0) {
                  await new Promise((resolve) => {
                      const script = document.createElement('script');
@@ -372,37 +370,66 @@
                  });
              }
 
-             // 2. 获取美股数据 (Finnhub 接口，逐个请求并加小延迟，防止 429)
+             // 2. 获取美股数据 (Yahoo Finance API，原生精准支持盘前盘后时段)
              if (usShareCodes.length > 0) {
-                 for (let i = 0; i < usShareCodes.length; i++) {
-                     const originalCode = usShareCodes[i];
-                     const symbol = originalCode.slice(2).toUpperCase(); // 去掉 'us' 前缀，转为大写，如 usAAPL -> AAPL
-                     
+                 const symbols = usShareCodes.map(c => c.slice(2).toUpperCase()); // 如 ['AAPL', 'TSLA']
+                 const yahooUrl = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${symbols.join(',')}`;
+
+                 // 高可用代理通道池，完美绕过雅虎跨域限制
+                 const proxyUrls = [
+                     `https://api.allorigins.win/raw?url=${encodeURIComponent(yahooUrl)}`,
+                     `https://corsproxy.io/?${encodeURIComponent(yahooUrl)}`,
+                     `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(yahooUrl)}`
+                 ];
+
+                 let yData = null;
+                 for (const pUrl of proxyUrls) {
                      try {
-                         const response = await fetch(`https://finnhub.io/api/v1/quote?symbol=${symbol}&token=${FINNHUB_API_KEY}`);
+                         const controller = new AbortController();
+                         const id = setTimeout(() => controller.abort(), 4000); // 4秒拿不到就火速换下一个代理
+                         const response = await fetch(pUrl, { signal: controller.signal });
+                         clearTimeout(id);
+
                          if (response.ok) {
                              const data = await response.json();
-                             // Finnhub 数据结构: { c: Current price, d: Change, dp: Percent change, ... }
-                             if (data && typeof data.c === 'number') {
-                                 newStockData.push({
-                                     code: originalCode,
-                                     name: symbol, // Finnhub quote 接口不返回公司名，使用代码代替
-                                     price: data.c,
-                                     change: data.d ? data.d.toFixed(3) : "0.000",
-                                     changePct: data.dp ? data.dp.toFixed(2) : "0.00"
-                                 });
+                             if (data && data.quoteResponse && data.quoteResponse.result) {
+                                 yData = data.quoteResponse.result;
+                                 break; // 成功拿到数据，跳出循环
                              }
-                         } else if (response.status === 429) {
-                             console.warn(`[Finnhub] API 频率超限 (Too Many Requests), 请稍后重试`);
-                             break; // 如果触发限流，停止当前批次的剩余请求
                          }
-                     } catch (err) {
-                         console.warn(`[Finnhub] 获取美股数据失败 (${symbol}):`, err);
+                     } catch(e) {
+                         // 继续尝试下一个代理
                      }
-                     // 为防止触发免费版的每分钟60次限制，每次请求间增加 200ms 延迟
-                     if (i < usShareCodes.length - 1) {
-                         await new Promise(r => setTimeout(r, 200));
-                     }
+                 }
+
+                 if (yData) {
+                     yData.forEach(item => {
+                         let price = item.regularMarketPrice;
+                         let change = item.regularMarketChange;
+                         let changePct = item.regularMarketChangePercent;
+
+                         // === 核心逻辑：智能捕获盘前(PRE)和盘后(POST)的跳动 ===
+                         if (item.marketState === 'PRE' && item.preMarketPrice !== undefined) {
+                             price = item.preMarketPrice;
+                             change = item.preMarketChange;
+                             changePct = item.preMarketChangePercent;
+                         } else if ((item.marketState === 'POST' || item.marketState === 'POSTPOST' || item.marketState === 'CLOSED') && item.postMarketPrice !== undefined) {
+                             price = item.postMarketPrice;
+                             change = item.postMarketChange;
+                             changePct = item.postMarketChangePercent;
+                         }
+
+                         // 匹配回原始的代码格式（如 usAAPL）
+                         const originalCode = usShareCodes.find(c => c.slice(2).toUpperCase() === item.symbol) || ('us' + item.symbol.toLowerCase());
+
+                         newStockData.push({
+                             code: originalCode,
+                             name: item.shortName || item.symbol,
+                             price: price || 0,
+                             change: change ? change.toFixed(3) : "0.000",
+                             changePct: changePct ? changePct.toFixed(2) : "0.00"
+                         });
+                     });
                  }
              }
 
@@ -421,12 +448,11 @@
          };
 
          fetchStocks();
-         // 为了兼顾体验和 API 限制，美股数据包含在内时，整体刷新频率设置为 15 秒
-         const interval = setInterval(fetchStocks, 15000); 
+         const interval = setInterval(fetchStocks, 10000); // 10秒级高频刷新，盘前盘后秒级跳动
          return () => clearInterval(interval);
       }, [portfolio]);
 
-      // === 新增：恢复因合并丢失的辅助计算函数 ===
+      // === 恢复因合并丢失的辅助计算函数 ===
       const formatPolyVol = (vol) => {
           const v = parseFloat(vol);
           if (isNaN(v)) return '0';
@@ -448,7 +474,7 @@
           return todayTotal;
       }, [portfolio, stockData, investMarket]);
 
-      // === 恢复：自动同步盈亏数据到云端的逻辑 ===
+      // === 自动同步盈亏数据到云端的逻辑 ===
       useEffect(() => {
           if (autoSyncPnLValue === 0 || !user) return;
           const today = getTodayDateString();
@@ -569,7 +595,7 @@
           return () => clearInterval(timer);
       }, []);
 
-      // === 恢复：AI 智能异步翻译 + 永久缓存引擎 ===
+      // === AI 智能异步翻译 + 永久缓存引擎 ===
       useEffect(() => {
           const translateNewMarkets = async () => {
               if (polyMarkets.length === 0) return;
@@ -1914,13 +1940,15 @@ ${detailStr}
                                     isHighProb = probNum >= 50;
                                 }
 
+                                // 彻底修复 404 跳转：最新 Polymarket 前端路由强制要求使用 Parent Event Slug 或 保底搜索
                                 let polyLink = 'https://polymarket.com/';
-                                if (market.slug) {
+                                if (market.events && market.events.length > 0 && market.events[0].slug) {
+                                    polyLink = `https://polymarket.com/event/${market.events[0].slug}`;
+                                } else if (market.slug) {
                                     polyLink = `https://polymarket.com/event/${market.slug}`;
-                                } else if (market.eventSlug) {
-                                    polyLink = `https://polymarket.com/event/${market.eventSlug}`;
-                                } else if (market.conditionId) {
-                                    polyLink = `https://polymarket.com/market/${market.conditionId}`;
+                                } else {
+                                    // 终极保底方案：直接利用问题标题进行全站搜索跳转
+                                    polyLink = `https://polymarket.com/markets?search=${encodeURIComponent(market.question)}`;
                                 }
                                 
                                 const displayTitle = polyTranslations[market.question] || market.question;
