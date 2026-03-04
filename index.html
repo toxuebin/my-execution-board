@@ -4,6 +4,13 @@
   <meta charset="UTF-8">
   <meta name="referrer" content="no-referrer">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  
+  <!-- iOS Safari PWA (添加到主屏幕) 核心配置 -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="执行看板">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  
   <title>我的执行看板 Pro</title>
   
   <script src="https://cdn.tailwindcss.com"></script>
@@ -54,7 +61,7 @@
       CloudRain, Wind, Droplets, ThermometerSun, Palmtree, Snowflake, Leaf, Flower2,
       Lock, Unlock, Plus, Minus, History, ArrowLeft, Phone, Calendar, Trash2, Edit2, AlertCircle, Star, BellRing, DownloadCloud, Cake,
       Wallet, Receipt, TrendingUp, TrendingDown, Share, Settings, Wand2, Film, PlayCircle,
-      Activity, Globe, ExternalLink, List, UserPlus2, PieChart, Eye, EyeOff, Cloud, Key, UploadCloud, Image, BrainCircuit
+      Activity, Globe, ExternalLink, List, UserPlus2, PieChart, Eye, EyeOff, Cloud, Key, UploadCloud, Image, BrainCircuit, Radar
     } = LucideIcons;
 
     // --- 核心修改区：直接固化你的专属配置 ---
@@ -148,8 +155,16 @@
       const [activeWeek, setActiveWeek] = useState(0);
       const [usdToCnyRate, setUsdToCnyRate] = useState(7.20);
       
-      // 新增：真实天气状态
+      // 真实天气状态
       const [weather, setWeather] = useState({ temp: '--°C', wind: '--km/h', icon: Sun, desc: '获取中' });
+
+      // Polymarket 追踪状态
+      const [polyMarkets, setPolyMarkets] = useState([]);
+      const [polyLoading, setPolyLoading] = useState(true);
+      const [polyError, setPolyError] = useState('');
+      
+      // 新增：AI 翻译缓存状态 (优先从本地读取)
+      const [polyTranslations, setPolyTranslations] = useState(() => JSON.parse(localStorage.getItem('polyTranslations') || '{}'));
 
       const [allMonthData, setAllMonthData] = useState(() => JSON.parse(localStorage.getItem('allMonthData') || '{}'));
       const [tasksCompleted, setTasksCompleted] = useState(() => JSON.parse(localStorage.getItem('tasksCompleted') || '{}'));
@@ -177,7 +192,6 @@
       const [showPortfolioModal, setShowPortfolioModal] = useState(false);
       const [newPosition, setNewPosition] = useState({ code: '', quantity: '', costPrice: '' });
       
-      // 新增：平仓与已实现盈亏状态
       const [showCloseModal, setShowCloseModal] = useState(false);
       const [closePositionData, setClosePositionData] = useState({ id: '', code: '', name: '', qty: 0, cost: 0, sellPrice: '', sellQty: '', error: '' });
       const [showEditRealizedModal, setShowEditRealizedModal] = useState(false);
@@ -185,9 +199,8 @@
 
       const [newsList, setNewsList] = useState([]);
       
-      // 记账本全新状态
       const [showExpenseModal, setShowExpenseModal] = useState(false);
-      const [expenseTab, setExpenseTab] = useState('list'); // 'list' | 'summary' | 'analysis'
+      const [expenseTab, setExpenseTab] = useState('list'); 
       const [expenseType, setExpenseType] = useState('out');
       const [newExpenseText, setNewExpenseText] = useState('');
       const [manualExpense, setManualExpense] = useState({ amount: '', desc: '' });
@@ -196,13 +209,12 @@
       const [isAnalyzing, setIsAnalyzing] = useState(false);
       const [aiAnalysisResult, setAiAnalysisResult] = useState('');
 
-      // 新增：股票 AI 分析状态
       const [isInvestAnalyzing, setIsInvestAnalyzing] = useState(false);
       const [investAiAnalysisResult, setInvestAiAnalysisResult] = useState('');
 
       const [investTab, setInvestTab] = useState('daily'); 
       const [investMarket, setInvestMarket] = useState('A');
-      const [investModal, setInvestModal] = useState({ show: false, date: '', val: '' });
+      const [calendarViewMode, setCalendarViewMode] = useState('amount'); // 新增：日历视图模式 amount / percent
       const [isClientAuth, setIsClientAuth] = useState(false);
       const [clientPwdInput, setClientPwdInput] = useState('');
       const [newClient, setNewClient] = useState({ date: getTodayDateString(), name: '', phone: '', level: 'B', remindDays: '0' });
@@ -285,65 +297,143 @@
           .catch(() => console.log('使用默认汇率 7.2'));
       }, []);
 
+      // === 股票数据获取逻辑 (A股腾讯 + 美股Finnhub) ===
       useEffect(() => {
-         const fetchStocks = () => {
+         const FINNHUB_API_KEY = 'd6k0h3pr01qkvh5rmhcgd6k0h3pr01qkvh5rmhd0';
+         
+         const fetchStocks = async () => {
              const baseCodes = [...new Set([...portfolio.map(p => p.code), 'sh000001', 'usDJI'])];
              
-             const fetchCodes = baseCodes.map(code => {
+             // 区分A股和美股代码
+             const aShareCodes = [];
+             const usShareCodes = [];
+             
+             baseCodes.forEach(code => {
                  let lower = code.toLowerCase();
-                 if (lower.startsWith('us')) return 'us' + lower.slice(2).toUpperCase();
-                 if (lower.startsWith('hk')) return 'hk' + lower.slice(2).toUpperCase();
-                 return lower; 
+                 if (lower.startsWith('us')) {
+                     usShareCodes.push(code); // 保持原始代码用于后续匹配
+                 } else {
+                     if (lower.startsWith('hk')) aShareCodes.push('hk' + lower.slice(2).toUpperCase());
+                     else aShareCodes.push(lower);
+                 }
              });
 
-             const script = document.createElement('script');
-             script.src = `https://qt.gtimg.cn/q=${fetchCodes.join(',')}&_t=${Date.now()}`;
-             script.onload = () => {
-                 const res = [];
-                 baseCodes.forEach((originalCode, index) => {
-                     const fCode = fetchCodes[index];
-                     const varName = `v_${fCode}`;
-                     const dataStr = window[varName];
+             const newStockData = [];
 
-                     if (dataStr) {
-                         const data = dataStr.split('~');
-                         if (data.length > 5) {
-                             let name = data[1]; 
-                             const currentPrice = parseFloat(data[3]);
-                             const prevClose = parseFloat(data[4]);
-                             let change = parseFloat(data[31]);
-                             let changePct = parseFloat(data[32]);
-                             
-                             if (isNaN(change) || isNaN(changePct)) {
-                                 if (!isNaN(currentPrice) && !isNaN(prevClose) && prevClose !== 0) {
-                                     change = currentPrice - prevClose;
-                                     changePct = (change / prevClose) * 100;
-                                 } else {
-                                     change = 0;
-                                     changePct = 0;
+             // 1. 获取 A 股数据 (腾讯接口，支持批量，频率可快)
+             if (aShareCodes.length > 0) {
+                 await new Promise((resolve) => {
+                     const script = document.createElement('script');
+                     script.src = `https://qt.gtimg.cn/q=${aShareCodes.join(',')}&_t=${Date.now()}`;
+                     script.onload = () => {
+                         baseCodes.filter(c => !c.toLowerCase().startsWith('us')).forEach(originalCode => {
+                             let fCode = originalCode.toLowerCase();
+                             if (fCode.startsWith('hk')) fCode = 'hk' + fCode.slice(2).toUpperCase();
+                             const varName = `v_${fCode}`;
+                             const dataStr = window[varName];
+
+                             if (dataStr) {
+                                 const data = dataStr.split('~');
+                                 if (data.length > 5) {
+                                     let name = data[1]; 
+                                     const currentPrice = parseFloat(data[3]);
+                                     const prevClose = parseFloat(data[4]);
+                                     let change = parseFloat(data[31]);
+                                     let changePct = parseFloat(data[32]);
+                                     
+                                     if (isNaN(change) || isNaN(changePct)) {
+                                         if (!isNaN(currentPrice) && !isNaN(prevClose) && prevClose !== 0) {
+                                             change = currentPrice - prevClose;
+                                             changePct = (change / prevClose) * 100;
+                                         } else {
+                                             change = 0;
+                                             changePct = 0;
+                                         }
+                                     }
+
+                                     newStockData.push({ 
+                                         code: originalCode, 
+                                         name: name, 
+                                         price: currentPrice, 
+                                         change: change.toFixed(3), 
+                                         changePct: changePct.toFixed(2) 
+                                     });
                                  }
                              }
-
-                             res.push({ 
-                                 code: originalCode, 
-                                 name: name, 
-                                 price: currentPrice, 
-                                 change: change.toFixed(3), 
-                                 changePct: changePct.toFixed(2) 
-                             });
-                         }
-                     }
+                         });
+                         if (document.head.contains(script)) document.head.removeChild(script);
+                         resolve();
+                     };
+                     script.onerror = () => {
+                         if (document.head.contains(script)) document.head.removeChild(script);
+                         resolve();
+                     };
+                     document.head.appendChild(script);
                  });
-                 if (res.length > 0) { setStockData(res); }
-                 if (document.head.contains(script)) document.head.removeChild(script);
-             };
-             script.onerror = () => { if (document.head.contains(script)) document.head.removeChild(script); };
-             document.head.appendChild(script);
+             }
+
+             // 2. 获取美股数据 (Finnhub 接口，逐个请求并加小延迟，防止 429)
+             if (usShareCodes.length > 0) {
+                 for (let i = 0; i < usShareCodes.length; i++) {
+                     const originalCode = usShareCodes[i];
+                     const symbol = originalCode.slice(2).toUpperCase(); // 去掉 'us' 前缀，转为大写，如 usAAPL -> AAPL
+                     
+                     try {
+                         const response = await fetch(`https://finnhub.io/api/v1/quote?symbol=${symbol}&token=${FINNHUB_API_KEY}`);
+                         if (response.ok) {
+                             const data = await response.json();
+                             // Finnhub 数据结构: { c: Current price, d: Change, dp: Percent change, ... }
+                             if (data && typeof data.c === 'number') {
+                                 newStockData.push({
+                                     code: originalCode,
+                                     name: symbol, // Finnhub quote 接口不返回公司名，使用代码代替
+                                     price: data.c,
+                                     change: data.d ? data.d.toFixed(3) : "0.000",
+                                     changePct: data.dp ? data.dp.toFixed(2) : "0.00"
+                                 });
+                             }
+                         } else if (response.status === 429) {
+                             console.warn(`[Finnhub] API 频率超限 (Too Many Requests), 请稍后重试`);
+                             break; // 如果触发限流，停止当前批次的剩余请求
+                         }
+                     } catch (err) {
+                         console.warn(`[Finnhub] 获取美股数据失败 (${symbol}):`, err);
+                     }
+                     // 为防止触发免费版的每分钟60次限制，每次请求间增加 200ms 延迟
+                     if (i < usShareCodes.length - 1) {
+                         await new Promise(r => setTimeout(r, 200));
+                     }
+                 }
+             }
+
+             if (newStockData.length > 0) {
+                 // 合并新旧数据，保留可能本次未成功抓取到的旧数据作为缓存兜底
+                 setStockData(prev => {
+                     const merged = [...newStockData];
+                     prev.forEach(pItem => {
+                         if (!merged.find(mItem => mItem.code === pItem.code)) {
+                             merged.push(pItem);
+                         }
+                     });
+                     return merged;
+                 });
+             }
          };
+
          fetchStocks();
-         const interval = setInterval(fetchStocks, 6000); 
+         // 为了兼顾体验和 API 限制，美股数据包含在内时，整体刷新频率设置为 15 秒
+         const interval = setInterval(fetchStocks, 15000); 
          return () => clearInterval(interval);
       }, [portfolio]);
+
+      // === 新增：恢复因合并丢失的辅助计算函数 ===
+      const formatPolyVol = (vol) => {
+          const v = parseFloat(vol);
+          if (isNaN(v)) return '0';
+          if (v >= 100000000) return (v / 100000000).toFixed(2) + '亿';
+          if (v >= 10000) return (v / 10000).toFixed(0) + '万';
+          return v.toFixed(0);
+      };
 
       const autoSyncPnLValue = useMemo(() => {
           if (portfolio.length === 0 || stockData.length === 0) return 0;
@@ -358,13 +448,15 @@
           return todayTotal;
       }, [portfolio, stockData, investMarket]);
 
+      // === 恢复：自动同步盈亏数据到云端的逻辑 ===
       useEffect(() => {
           if (autoSyncPnLValue === 0 || !user) return;
           const today = getTodayDateString();
           const dayOfWeek = new Date().getDay();
           if (dayOfWeek >= 1 && dayOfWeek <= 5) {
               const currentRecords = investments[investMarket]?.records || {};
-              if (Math.abs((currentRecords[today] || 0) - autoSyncPnLValue) > 0.01) {
+              // 防抖机制：避免频繁无意义更新，只在金额有实质变动时写入
+              if (Math.abs((currentRecords[today] || 0) - autoSyncPnLValue) > 0.05) {
                   const updatedInvestments = { 
                       ...investments, 
                       [investMarket]: { 
@@ -375,7 +467,169 @@
                   saveData({ investments: updatedInvestments });
               }
           }
-      }, [autoSyncPnLValue, user]);
+      }, [autoSyncPnLValue, user, investMarket]);
+
+      // === Polymarket 全球预测极速抓取逻辑 (多线程并发竞速) ===
+      useEffect(() => {
+          const fetchPolymarket = async () => {
+              setPolyLoading(true);
+              setPolyError('');
+              
+              try {
+                  const targetUrl = 'https://gamma-api.polymarket.com/markets?limit=30&active=true&closed=false&order=volumeNum&ascending=false';
+                  
+                  // 代理通道池 (包含包装模式和直连)
+                  const proxies = [
+                      { name: 'Direct', url: targetUrl }, // 直连最快
+                      { name: 'AllOrigins(Wrapper)', url: `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}` }, // 套壳包装最稳
+                      { name: 'CorsProxyIO', url: `https://corsproxy.io/?${encodeURIComponent(targetUrl)}` },
+                      { name: 'CodeTabs', url: `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}` },
+                      { name: 'Afeld', url: `https://jsonp.afeld.me/?url=${encodeURIComponent(targetUrl)}` }
+                  ];
+
+                  // 并发竞速引擎：同时发起所有请求，谁最先返回有效数据就用谁
+                  const fetchFirstValid = (proxyList) => {
+                      return new Promise((resolve, reject) => {
+                          let failedCount = 0;
+                          let isResolved = false;
+
+                          proxyList.forEach(proxy => {
+                              const fetchPromise = new Promise(async (res, rej) => {
+                                  try {
+                                      const controller = new AbortController();
+                                      const id = setTimeout(() => controller.abort(), 6000); // 6秒防卡死
+                                      
+                                      const response = await fetch(proxy.url, { 
+                                          headers: { 'Accept': 'application/json' },
+                                          signal: controller.signal
+                                      });
+                                      clearTimeout(id);
+                                      
+                                      if (!response.ok) throw new Error('HTTP ' + response.status);
+                                      const data = await response.json();
+                                      
+                                      // AllOrigins wrapper 模式需要解包内部的 contents
+                                      let finalData = data;
+                                      if (proxy.name === 'AllOrigins(Wrapper)' && data.contents) {
+                                          finalData = JSON.parse(data.contents);
+                                      }
+
+                                      if (Array.isArray(finalData) || finalData.data || finalData.markets) {
+                                          res({ name: proxy.name, data: finalData });
+                                      } else {
+                                          throw new Error('Data format invalid');
+                                      }
+                                  } catch (err) {
+                                      rej(err);
+                                  }
+                              });
+
+                              // 只要有一个成功，整体 Promise 就直接 resolve
+                              fetchPromise.then(result => {
+                                  if (!isResolved) {
+                                      isResolved = true;
+                                      resolve(result);
+                                  }
+                              }).catch(err => {
+                                  failedCount++;
+                                  // 只有所有通道都失败了，才报 Error
+                                  if (failedCount === proxyList.length && !isResolved) {
+                                      reject(new Error('所有可用通道均已拦截或超时，请检查网络或 CORS 插件。'));
+                                  }
+                              });
+                          });
+                      });
+                  };
+
+                  const winner = await fetchFirstValid(proxies);
+                  console.log(`[Polymarket 极速引擎] 命中通道: ${winner.name}`);
+                  const parsedData = winner.data;
+
+                  let marketsArray = Array.isArray(parsedData) ? parsedData : (parsedData.data || parsedData.markets || []);
+                  
+                  if (marketsArray && marketsArray.length > 0) {
+                      const validMarkets = marketsArray.filter(m => m.question && (m.outcomePrices || (m.tokens && m.tokens.length > 0))).slice(0, 10);
+                      if (validMarkets.length > 0) {
+                          setPolyMarkets(validMarkets);
+                      } else {
+                          throw new Error('未找到有效的预测市场数据');
+                      }
+                  } else {
+                      throw new Error('解析到的数据为空');
+                  }
+              } catch (e) {
+                  console.warn("Polymarket 抓取失败:", e.message);
+                  setPolyError(e.message);
+              } finally {
+                  setPolyLoading(false);
+              }
+          };
+          fetchPolymarket();
+          const timer = setInterval(fetchPolymarket, 300000);
+          return () => clearInterval(timer);
+      }, []);
+
+      // === 恢复：AI 智能异步翻译 + 永久缓存引擎 ===
+      useEffect(() => {
+          const translateNewMarkets = async () => {
+              if (polyMarkets.length === 0) return;
+
+              const untranslatedTexts = polyMarkets
+                  .map(m => m.question)
+                  .filter(q => !polyTranslations[q]);
+
+              if (untranslatedTexts.length === 0) return;
+
+              const savedAiKey = localStorage.getItem('customAiApiKey') || defaultAiApiKey;
+              if (!savedAiKey) return;
+
+              try {
+                  console.log(`[AI翻译引擎] 发现 ${untranslatedTexts.length} 条新市场，开始静默翻译...`);
+                  const url = 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
+                  const prompt = `你是一个专业的金融与政治预测市场翻译专家。请将以下英文预测标题翻译成准确、简洁、地道的中文。
+要求：
+1. 保持人名、机构名（如Trump, Fed, 球队名等）的准确翻译，符合国内看盘习惯。
+2. 必须且只能返回纯 JSON 对象格式（不要任何 Markdown 标记，不要输出 \`\`\`json 等修饰符），JSON的键为原始英文字符串，值为中文翻译。
+
+待翻译列表：\n${JSON.stringify(untranslatedTexts)}`;
+
+                  const payload = {
+                      model: "qwen-plus",
+                      messages: [{ role: "user", content: prompt }]
+                  };
+
+                  const response = await fetch(url, {
+                      method: 'POST',
+                      headers: { 'Authorization': `Bearer ${savedAiKey}`, 'Content-Type': 'application/json' },
+                      body: JSON.stringify(payload)
+                  });
+
+                  if (response.ok) {
+                      const result = await response.json();
+                      if (result && result.choices && result.choices.length > 0) {
+                          let textResponse = result.choices[0].message.content;
+                          let cleanJson = textResponse.replace(/```json/gi, '').replace(/```/g, '').trim();
+                          
+                          try {
+                              const newTranslations = JSON.parse(cleanJson);
+                              if (Object.keys(newTranslations).length > 0) {
+                                  const updatedCache = { ...polyTranslations, ...newTranslations };
+                                  setPolyTranslations(updatedCache);
+                                  localStorage.setItem('polyTranslations', JSON.stringify(updatedCache));
+                                  console.log('[AI翻译引擎] 翻译成功并已写入永久缓存！');
+                              }
+                          } catch (parseError) {
+                              console.warn("大模型返回的数据不是标准JSON，解析失败:", cleanJson);
+                          }
+                      }
+                  }
+              } catch (error) {
+                  console.error("AI批量翻译请求失败:", error);
+              }
+          };
+
+          translateNewMarkets();
+      }, [polyMarkets]);
 
       useEffect(() => {
          const fetchNews = () => {
@@ -433,18 +687,15 @@
 
       useEffect(() => { setCurrentMotto(MOTTO_LIST[Math.floor(Math.random() * MOTTO_LIST.length)]); const t = setInterval(() => setCurrentTime(new Date()), 1000); return () => clearInterval(t); }, []);
 
-      // 新增：自动获取嘉兴实时天气 (使用更稳定的开源气象接口)
       useEffect(() => {
          const fetchWeather = async () => {
             try {
-               // 锁定请求嘉兴坐标 (30.76, 120.75) 的气象数据，完美支持跨域
                const res = await fetch('https://api.open-meteo.com/v1/forecast?latitude=30.76&longitude=120.75&current_weather=true&timezone=Asia%2FShanghai');
                const data = await res.json();
                if (data && data.current_weather) {
                   const current = data.current_weather;
                   const code = current.weathercode;
                   
-                  // WMO 国际气象代码智能判断图标和中文描述
                   let wIcon = Sun;
                   let wDesc = '晴';
                   
@@ -466,27 +717,40 @@
             } catch (e) { console.warn("实时天气获取失败，请检查网络", e); }
          };
          fetchWeather();
-         const timer = setInterval(fetchWeather, 3600000); // 后台每 1 小时自动静默刷新一次
+         const timer = setInterval(fetchWeather, 3600000); 
          return () => clearInterval(timer);
       }, []);
 
       useEffect(() => {
-        const fallbackTimer = setTimeout(() => { setLoading(false); }, 4000); 
-        if (!auth) { setLoading(false); return; }
+        let unsubscribeAuth = () => {};
         
         const initAuth = async () => {
-          try { 
-            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) await signInWithCustomToken(auth, __initial_auth_token);
-            else await signInAnonymously(auth); 
-          } catch (err) { setLoading(false); }
+          try {
+            if (!auth) {
+               setLoading(false);
+               return;
+            }
+            // 修正首次加载时鉴权的顺序，保证先执行 signIn 然后再监听
+            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                await signInWithCustomToken(auth, __initial_auth_token);
+            } else {
+                await signInAnonymously(auth); 
+            }
+            
+            unsubscribeAuth = onAuthStateChanged(auth, u => { 
+                setUser(u); 
+                if (!u) setLoading(false); 
+            });
+            
+          } catch (err) { 
+            console.error("Auth init failed:", err);
+            setLoading(false); 
+          }
         };
+        
         initAuth();
         
-        const unsubscribeAuth = onAuthStateChanged(auth, u => { 
-            setUser(u); 
-            if (!u) setLoading(false); 
-        });
-        
+        const fallbackTimer = setTimeout(() => { setLoading(false); }, 4000); 
         return () => { unsubscribeAuth(); clearTimeout(fallbackTimer); };
       }, []);
 
@@ -972,7 +1236,7 @@ ${detailStr}
           return (isNegative ? '-' : '') + currencySymbol + formatted;
       };
 
-      // 新增：提交平仓结算，自动将盈亏计入底层
+      // 提交平仓结算，自动将盈亏计入底层
       const handleClosePositionSubmit = () => {
           const sellP = parseFloat(closePositionData.sellPrice);
           const sellQ = parseFloat(closePositionData.sellQty);
@@ -995,20 +1259,21 @@ ${detailStr}
 
               let newPortfolio = [...portfolio];
               if (sellQ === closePositionData.qty) {
-                  newPortfolio = newPortfolio.filter(p => p.id !== closePositionData.id); // 全量平仓则移除
+                  newPortfolio = newPortfolio.filter(p => p.id !== closePositionData.id);
               } else {
                   newPortfolio = newPortfolio.map(p => 
-                      p.id === closePositionData.id ? { ...p, quantity: p.quantity - sellQ } : p // 部分平仓则扣减数量
+                      p.id === closePositionData.id ? { ...p, quantity: p.quantity - sellQ } : p 
                   );
               }
 
               saveData({ investments: newInvestments, portfolio: newPortfolio });
               setShowCloseModal(false);
+              setClosePositionData({ id: '', code: '', name: '', qty: 0, cost: 0, sellPrice: '', sellQty: '', error: '' });
           };
           requireAuth(action)();
       };
 
-      // 新增：手动校准历史盈亏
+      // 手动校准历史盈亏
       const handleEditRealizedSubmit = () => {
           const val = parseFloat(editRealizedValue);
           if (isNaN(val)) return;
@@ -1020,6 +1285,7 @@ ${detailStr}
               };
               saveData({ investments: newInvestments });
               setShowEditRealizedModal(false);
+              setEditRealizedValue('');
           };
           requireAuth(action)();
       };
@@ -1138,9 +1404,12 @@ ${detailStr}
           totalMarketValue += mv; totalCost += cst; todayPnL += todayItemPnL;
           return { ...item, sData, price, change, mv, cst, pnl, todayItemPnL };
       });
-      const totalUnrealizedPnL = totalMarketValue - totalCost; // 持仓浮动盈亏
-      const realizedPnL = investments[investMarket]?.realizedPnL || 0; // 已结历史盈亏
-      const totalPnL = totalUnrealizedPnL + realizedPnL; // 绝对总盈亏
+      const totalUnrealizedPnL = totalMarketValue - totalCost; 
+      const realizedPnL = investments[investMarket]?.realizedPnL || 0; 
+      const totalPnL = totalUnrealizedPnL + realizedPnL; 
+      
+      const todayPnLPct = totalCost > 0 ? (todayPnL / totalCost) * 100 : 0;
+      const totalPnLPct = totalCost > 0 ? (totalPnL / totalCost) * 100 : 0;
 
       // AI 生成股票持仓诊断报告
       const handleInvestAIAnalysis = async () => {
@@ -1387,24 +1656,35 @@ ${detailStr}
                    {showPortfolioDetails && (
                      <div className="animate-in fade-in slide-in-from-top-2 duration-300">
                         <div className={`grid grid-cols-3 gap-3 md:gap-5 mb-5 p-4 md:p-6 rounded-[1.5rem] border ${isDarkMode ? 'bg-[#0f212e]/50 border-[#213743]' : 'bg-gray-50/50 border-gray-100'}`}>
-                            <div><div className={`text-[10px] md:text-xs font-bold mb-1 ${theme.textSub}`}>总市值 {investMarket === 'US' ? '(美元)' : '(人民币)'}</div><div className={`text-lg md:text-2xl font-black font-mono tracking-tighter ${theme.textMain}`}>{formatInvestNum(totalMarketValue, false, investMarket === 'US' ? '$' : '¥')}</div></div>
+                            <div>
+                                <div className={`text-[10px] md:text-xs font-bold mb-1 ${theme.textSub}`}>总市值 {investMarket === 'US' ? '(美元)' : '(人民币)'}</div>
+                                <div className={`text-lg md:text-2xl font-black font-mono tracking-tighter ${theme.textMain}`}>{formatInvestNum(totalMarketValue, false, investMarket === 'US' ? '$' : '¥')}</div>
+                            </div>
                             <div className="border-l border-dashed pl-3 border-gray-300 dark:border-gray-700">
-                                <div className={`text-[10px] md:text-xs font-bold mb-1 ${theme.textSub}`}>今日盈亏 {investMarket === 'US' ? '(美元)' : '(人民币)'}</div>
-                                <div className={`text-lg md:text-2xl font-black font-mono tracking-tighter ${todayPnL >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>{formatInvestNum(todayPnL, false, investMarket === 'US' ? '$' : '¥')}</div>
+                                <div className={`text-[10px] md:text-xs font-bold mb-1 ${theme.textSub}`}>今日盈亏</div>
+                                <div className="flex items-baseline gap-1">
+                                    <div className={`text-lg md:text-2xl font-black font-mono tracking-tighter ${todayPnL >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>{formatInvestNum(todayPnL, false, investMarket === 'US' ? '$' : '¥')}</div>
+                                    <div className={`text-[10px] font-bold ${todayPnLPct >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>{todayPnLPct >= 0 ? '+' : ''}{todayPnLPct.toFixed(2)}%</div>
+                                </div>
                             </div>
                             <div className="border-l border-dashed pl-3 border-gray-300 dark:border-gray-700 relative group">
                                 <div className={`text-[10px] md:text-xs font-bold mb-1 flex items-center gap-1 ${theme.textSub}`}>
-                                    累计盈亏 {investMarket === 'US' ? '(美元)' : '(人民币)'}
+                                    累计盈亏
                                     <button onClick={() => { setEditRealizedValue(realizedPnL); setShowEditRealizedModal(true); }} className="p-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors" title="校准已结历史盈亏">
                                         <Edit2 className="w-3 h-3" />
                                     </button>
                                 </div>
-                                <div className={`text-lg md:text-2xl font-black font-mono tracking-tighter ${totalPnL >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>{formatInvestNum(totalPnL, false, investMarket === 'US' ? '$' : '¥')}</div>
+                                <div className="flex items-baseline gap-1">
+                                    <div className={`text-lg md:text-2xl font-black font-mono tracking-tighter ${totalPnL >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>{formatInvestNum(totalPnL, false, investMarket === 'US' ? '$' : '¥')}</div>
+                                    <div className={`text-[10px] font-bold ${totalPnLPct >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>{totalPnLPct >= 0 ? '+' : ''}{totalPnLPct.toFixed(2)}%</div>
+                                </div>
                                 <div className={`text-[9px] mt-0.5 font-bold ${theme.textSub}`}>浮动 {formatInvestNum(totalUnrealizedPnL, false, '')} | 已结 {formatInvestNum(realizedPnL, false, '')}</div>
                             </div>
                         </div>
                         <div className="space-y-2 mb-6 relative">
-                            {enrichedPortfolio.map(item => (
+                            {enrichedPortfolio.map(item => {
+                               const itemPnLPct = item.cst > 0 ? (item.pnl / item.cst) * 100 : 0;
+                               return (
                                <div key={item.id} className={`flex items-center justify-between p-3 rounded-xl border ${isDarkMode ? 'bg-[#0f212e] border-[#213743]' : 'bg-white border-gray-100'}`}>
                                   <div className="w-[30%] truncate flex flex-col">
                                      <a href={getXueqiuUrl(item.code)} target="_blank" rel="noreferrer" className={`text-sm font-bold truncate hover:underline ${theme.textMain}`}>{item.sData.name || '...'}</a>
@@ -1417,7 +1697,7 @@ ${detailStr}
                                   <div className="w-[25%] text-right">
                                      <div className={`text-xs font-mono font-bold ${item.todayItemPnL >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>{formatInvestNum(item.todayItemPnL, false, item.market === 'US' ? '$' : '¥')}</div>
                                      <div className={`text-[9px] mt-0.5 font-bold ${theme.textSub}`}>市值 {formatInvestNum(item.mv, false, item.market === 'US' ? '$' : '¥')}</div>
-                                     <div className={`text-[9px] mt-0.5 font-bold ${item.pnl >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>浮动 {formatInvestNum(item.pnl, false, item.market === 'US' ? '$' : '¥')}</div>
+                                     <div className={`text-[9px] mt-0.5 font-bold ${item.pnl >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>浮动 {formatInvestNum(item.pnl, false, '')} ({itemPnLPct >= 0 ? '+' : ''}{itemPnLPct.toFixed(2)}%)</div>
                                   </div>
                                   <div className="w-[15%] flex flex-col items-end gap-2 pr-1">
                                       <button onClick={() => {
@@ -1427,17 +1707,26 @@ ${detailStr}
                                       <button onClick={() => handleRemovePosition(item.id)} className="text-gray-400 hover:text-red-500"><Trash2 className="w-3.5 h-3.5"/></button>
                                   </div>
                                </div>
-                            ))}
+                               );
+                            })}
                         </div>
                      </div>
                    )}
-                   <div className={`flex flex-wrap items-center gap-5 mb-4 border-b pb-2 ${isDarkMode ? 'border-[#213743]' : 'border-gray-200'}`}>
-                      {['daily', 'monthly', 'analysis'].map((t, i) => (
-                         <button key={t} onClick={()=>setInvestTab(t)} className={`text-xs md:text-sm font-black transition-colors ${investTab===t ? theme.textMain : theme.textSub} relative pb-1`}>
-                            {['日历盈亏', '月度汇总', 'AI 智能诊断'][i]}
-                            {investTab===t && <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-4 h-0.5 bg-red-500 rounded-full"></div>}
-                         </button>
-                      ))}
+                   <div className={`flex flex-wrap justify-between items-center mb-4 border-b pb-2 ${isDarkMode ? 'border-[#213743]' : 'border-gray-200'}`}>
+                      <div className="flex gap-5">
+                          {['daily', 'monthly', 'analysis'].map((t, i) => (
+                             <button key={t} onClick={()=>setInvestTab(t)} className={`text-xs md:text-sm font-black transition-colors ${investTab===t ? theme.textMain : theme.textSub} relative pb-1`}>
+                                {['日历盈亏', '月度汇总', 'AI 智能诊断'][i]}
+                                {investTab===t && <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-4 h-0.5 bg-red-500 rounded-full"></div>}
+                             </button>
+                          ))}
+                      </div>
+                      {investTab === 'daily' && (
+                          <div className={`flex p-0.5 rounded-lg text-[10px] font-bold ${isDarkMode ? 'bg-[#0f212e] border border-[#213743]' : 'bg-gray-100 border border-gray-200'}`}>
+                              <button onClick={() => setCalendarViewMode('amount')} className={`px-2 py-1 rounded-md transition-all ${calendarViewMode === 'amount' ? (isDarkMode ? 'bg-[#213743] text-white shadow' : 'bg-white text-gray-900 shadow') : theme.textSub}`}>金额</button>
+                              <button onClick={() => setCalendarViewMode('percent')} className={`px-2 py-1 rounded-md transition-all ${calendarViewMode === 'percent' ? (isDarkMode ? 'bg-[#213743] text-white shadow' : 'bg-white text-gray-900 shadow') : theme.textSub}`}>比例</button>
+                          </div>
+                      )}
                    </div>
 
                    {investTab === 'daily' && (
@@ -1455,17 +1744,37 @@ ${detailStr}
                                  let cellColorClass = theme.textMain, cellBgClass = '';
                                  if (val > 0) { cellColorClass = theme.redUp.split(' ')[0]; cellBgClass = theme.redUp.split(' ')[1]; }
                                  else if (val < 0) { cellColorClass = theme.greenDown.split(' ')[0]; cellBgClass = theme.greenDown.split(' ')[1]; }
+                                 
+                                 let displayVal = '';
+                                 if (val !== undefined) {
+                                     if (calendarViewMode === 'amount') {
+                                         displayVal = formatInvestNum(val, false, investMarket === 'US' ? '$' : '¥');
+                                     } else {
+                                         const pct = totalCost > 0 ? (val / totalCost) * 100 : 0;
+                                         displayVal = (pct > 0 ? '+' : '') + pct.toFixed(2) + '%';
+                                     }
+                                 }
+
                                  return (
                                    <div key={day} className={`border-r border-b flex flex-col items-center justify-center ${isDarkMode ? 'border-[#213743]' : 'border-gray-200'} ${cellBgClass}`}>
                                      <span className={`text-[9px] font-bold ${val!==undefined ? theme.textMain : theme.textSub}`}>{day}</span>
-                                     <span className={`text-[9px] md:text-[11px] font-black tracking-tighter ${cellColorClass}`}>{val !== undefined ? formatInvestNum(val, false, investMarket === 'US' ? '$' : '¥') : ''}</span>
+                                     <span className={`text-[9px] md:text-[11px] font-black tracking-tighter ${cellColorClass}`}>{displayVal}</span>
                                    </div>
                                  );
                               })}
                             </div>
                           ))}
                        </div>
-                       <div className={`mt-4 text-xs font-bold ${theme.textMain}`}>当月累计盈亏 {investMarket === 'US' ? '(美元)' : '(人民币)'}: <span className={getInvestmentTotal('monthly') >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}>{formatInvestNum(getInvestmentTotal('monthly'), false, investMarket === 'US' ? '$' : '¥')}</span></div>
+                       <div className="flex justify-between items-center mt-4">
+                           <div className={`text-xs font-bold ${theme.textMain}`}>
+                               当月累计盈亏: <span className={getInvestmentTotal('monthly') >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}>{formatInvestNum(getInvestmentTotal('monthly'), false, investMarket === 'US' ? '$' : '¥')}</span>
+                           </div>
+                           {calendarViewMode === 'percent' && (
+                               <div className={`text-[9px] ${theme.textSub}`}>
+                                   *比例基于当前持仓总成本计算: {formatInvestNum(totalCost, false, investMarket === 'US' ? '$' : '¥')}
+                               </div>
+                           )}
+                       </div>
                      </>
                    )}
 
@@ -1503,7 +1812,7 @@ ${detailStr}
                    {investTab === 'analysis' && (
                       <div className="space-y-5 mt-4 animate-in fade-in duration-300">
                            <div className={`p-4 rounded-2xl border flex items-start gap-4 ${isDarkMode ? 'bg-red-900/10 border-red-900/30' : 'bg-red-50 border-red-100'}`}>
-                                <div className="p-3 bg-red-500 text-white rounded-full shrink-0 shadow-md">
+                                <div className="p-3 bg-red-50 text-white rounded-full shrink-0 shadow-md">
                                     <BrainCircuit className="w-5 h-5" />
                                 </div>
                                 <div>
@@ -1526,6 +1835,134 @@ ${detailStr}
                             )}
                       </div>
                    )}
+                </div>
+
+                {/* === 新增：Polymarket 全球预测模块 === */}
+                <div className={`${theme.card} rounded-[2rem] border-none overflow-hidden shadow-2xl p-4 md:p-6 mt-4`}>
+                    <div className={`flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-5 pb-4 border-b ${isDarkMode ? 'border-[#213743]' : 'border-gray-200'}`}>
+                        <div className="flex items-center gap-2">
+                            <div className="p-2 bg-indigo-500/10 text-indigo-500 rounded-xl"><Radar className="w-5 h-5"/></div>
+                            <h3 className={`text-base font-bold tracking-tight ${theme.textMain}`}>Polymarket 全球预测龙头</h3>
+                        </div>
+                        <div className={`text-[10px] font-bold ${theme.textSub}`}>按资金池体量抓取 Top 10</div>
+                    </div>
+                    
+                    <div className="space-y-3">
+                        {polyLoading && polyMarkets.length === 0 ? (
+                            <div className="text-center text-xs py-8 text-gray-400 flex flex-col items-center gap-3">
+                                <RefreshCw className="w-6 h-6 animate-spin text-indigo-400" />
+                                正在连接 Polymarket 获取全球预测数据...
+                            </div>
+                        ) : polyError && polyMarkets.length === 0 ? (
+                            <div className="text-center text-xs py-8 text-red-400 flex flex-col items-center gap-3">
+                                <AlertCircle className="w-6 h-6" />
+                                <span className="font-bold text-sm">无法连接到 Polymarket 数据源</span>
+                                <span className="opacity-70 px-4">原因: {typeof polyError === 'string' ? polyError : '跨域拦截或被墙'}</span>
+                                <span className="opacity-80 px-4 text-orange-400 dark:text-orange-300 mt-1">💡 建议: 请检查是否被广告拦截插件(如AdBlock/Brave)拦截。若持续失败，可在浏览器安装「Allow CORS」扩展程序后重试。</span>
+                                <button onClick={() => window.location.reload()} className={`mt-2 px-6 py-2 rounded-lg text-xs font-bold shadow-md transition-transform active:scale-95 ${isDarkMode ? 'bg-[#213743] text-white hover:bg-white/10' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}>重新连接</button>
+                            </div>
+                        ) : (
+                            polyMarkets.map((market, idx) => {
+                                // 彻底修复：极其稳健的防崩溃嵌套解析算法
+                                let bestPrice = 0;
+                                let leadingOutcome = '';
+                                
+                                try {
+                                    let prices = [];
+                                    let outcomes = [];
+
+                                    if (market.outcomePrices) {
+                                        let parsed = typeof market.outcomePrices === 'string' ? JSON.parse(market.outcomePrices) : market.outcomePrices;
+                                        if (Array.isArray(parsed)) prices = parsed.map(p => parseFloat(p));
+                                    } else if (market.tokens && Array.isArray(market.tokens)) {
+                                        prices = market.tokens.map(t => parseFloat(t.price));
+                                    }
+
+                                    if (market.outcomes) {
+                                        let parsedOutcomes = typeof market.outcomes === 'string' ? JSON.parse(market.outcomes) : market.outcomes;
+                                        if (Array.isArray(parsedOutcomes)) outcomes = parsedOutcomes;
+                                    }
+
+                                    if (prices.length > 0) {
+                                        const yesIndex = outcomes.findIndex(o => typeof o === 'string' && o.toLowerCase() === 'yes');
+                                        if (yesIndex !== -1 && !isNaN(prices[yesIndex])) {
+                                            bestPrice = prices[yesIndex];
+                                            leadingOutcome = 'Yes';
+                                        } else {
+                                            const validPrices = prices.filter(p => !isNaN(p) && p > 0 && p < 1);
+                                            if (validPrices.length > 0) {
+                                                bestPrice = Math.max(...validPrices);
+                                                const maxIdx = prices.indexOf(bestPrice);
+                                                if (maxIdx > -1 && outcomes[maxIdx]) {
+                                                    leadingOutcome = outcomes[maxIdx];
+                                                }
+                                            }
+                                        }
+                                    }
+                                } catch (err) {
+                                    console.warn("解析 Polymarket 赔率遭遇罕见结构，已略过:", err);
+                                }
+                                
+                                let displayProb = '--%';
+                                let displayOdds = '--';
+                                let isHighProb = false;
+
+                                if (bestPrice && !isNaN(bestPrice) && bestPrice > 0 && bestPrice < 1) {
+                                    const probNum = bestPrice * 100;
+                                    displayProb = probNum.toFixed(1) + '%';
+                                    displayOdds = (1 / bestPrice).toFixed(2); 
+                                    isHighProb = probNum >= 50;
+                                }
+
+                                let polyLink = 'https://polymarket.com/';
+                                if (market.slug) {
+                                    polyLink = `https://polymarket.com/event/${market.slug}`;
+                                } else if (market.eventSlug) {
+                                    polyLink = `https://polymarket.com/event/${market.eventSlug}`;
+                                } else if (market.conditionId) {
+                                    polyLink = `https://polymarket.com/market/${market.conditionId}`;
+                                }
+                                
+                                const displayTitle = polyTranslations[market.question] || market.question;
+                                
+                                let displayOutcome = leadingOutcome;
+                                if (leadingOutcome === 'Yes') displayOutcome = '是';
+                                if (leadingOutcome === 'No') displayOutcome = '否';
+
+                                return (
+                                    <a key={market.id || idx} href={polyLink} target="_blank" rel="noreferrer" title="点击前往 Polymarket 官网查看详情" 
+                                       className={`flex items-center justify-between p-4 rounded-xl border ${isDarkMode ? 'bg-[#0f212e] border-[#213743] hover:bg-white/5' : 'bg-gray-50/50 border-gray-100 hover:bg-blue-50/50'} hover:scale-[1.01] hover:shadow-md transition-all cursor-pointer group`}>
+                                        <div className="w-[55%] flex flex-col gap-1 pr-2 relative">
+                                            <div className={`text-sm md:text-base font-bold line-clamp-2 leading-snug ${theme.textMain} group-hover:text-indigo-500 transition-colors`}>
+                                                {displayTitle}
+                                            </div>
+                                            <div className={`text-[10px] font-mono opacity-50 line-clamp-1 ${theme.textSub}`}>
+                                                {market.question}
+                                            </div>
+                                            <ExternalLink className="w-3 h-3 absolute -right-2 top-1 text-indigo-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+                                        </div>
+                                        <div className="w-[45%] flex justify-end gap-3 md:gap-5 items-center">
+                                            <div className="text-right">
+                                                <div className={`text-[10px] ${theme.textSub} mb-1`}>资金池(美元)</div>
+                                                <div className={`text-xs md:text-sm font-mono font-bold ${theme.textMain}`}>
+                                                    ${formatPolyVol(market.volumeNum || market.volume)}
+                                                </div>
+                                            </div>
+                                            <div className="text-right w-20 md:w-24">
+                                                <div className={`text-[10px] ${theme.textSub} mb-1`}>欧盘赔率</div>
+                                                <div className={`text-sm md:text-lg font-black font-mono ${isHighProb ? 'text-green-500' : 'text-red-500'}`}>
+                                                    {displayOdds}
+                                                </div>
+                                                <div className={`text-[8px] mt-0.5 font-bold ${theme.textSub} line-clamp-1`} title={displayOutcome}>
+                                                    胜率: {displayProb} {displayOutcome && displayOutcome !== '是' ? `(${displayOutcome})` : ''}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </a>
+                                );
+                            })
+                        )}
+                    </div>
                 </div>
               </div>
 
@@ -1677,7 +2114,7 @@ ${detailStr}
                     {expenseTab === 'analysis' && (
                         <div className="space-y-5 animate-in fade-in duration-300 pb-10">
                             <div className={`p-4 rounded-2xl border flex items-start gap-4 ${isDarkMode ? 'bg-purple-900/10 border-purple-900/30' : 'bg-purple-50 border-purple-100'}`}>
-                                <div className="p-3 bg-purple-500 text-white rounded-full shrink-0 shadow-md">
+                                <div className="p-3 bg-purple-50 text-white rounded-full shrink-0 shadow-md">
                                     <BrainCircuit className="w-6 h-6" />
                                 </div>
                                 <div>
@@ -1800,7 +2237,7 @@ ${detailStr}
           )}
 
           {showPortfolioModal && (
-            <div className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-black/60" onClick={(e) => { if(e.target === e.currentTarget) { setShowPortfolioModal(false); } }}>
+            <div className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-black/60" onClick={(e) => { if(e.target === e.currentTarget) { setShowPortfolioModal(false); setNewPosition({ code: '', quantity: '', costPrice: '' }); } }}>
               <div className={`${theme.modalBg} p-6 rounded-[2rem] w-full max-w-sm shadow-2xl border ${isDarkMode ? 'border-[#213743]' : ''}`}>
                 <h3 className={`text-lg font-bold mb-4 ${theme.textMain}`}>录入持仓</h3>
                 <div className="space-y-4 mb-6">
@@ -1814,7 +2251,7 @@ ${detailStr}
           )}
 
           {showCloseModal && (
-            <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={(e) => { if(e.target === e.currentTarget) setShowCloseModal(false); }}>
+            <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={(e) => { if(e.target === e.currentTarget) { setShowCloseModal(false); setClosePositionData({ id: '', code: '', name: '', qty: 0, cost: 0, sellPrice: '', sellQty: '', error: '' }); } }}>
               <div className={`${theme.modalBg} p-6 rounded-[2rem] w-full max-w-sm shadow-2xl border ${isDarkMode ? 'border-[#213743]' : ''}`}>
                 <h3 className={`text-lg font-bold mb-1 ${theme.textMain}`}>平仓 / 调仓结算</h3>
                 <p className={`text-xs mb-4 ${theme.textSub}`}>结算的盈亏将自动计入“已结历史盈亏”中，防止换仓后利润丢失。</p>
@@ -1844,7 +2281,7 @@ ${detailStr}
                    </div>
                 </div>
                 <div className="flex gap-3">
-                   <button onClick={() => setShowCloseModal(false)} className={`flex-1 py-3 rounded-xl font-bold ${isDarkMode ? 'bg-[#213743] text-white' : 'bg-gray-200 text-gray-700'}`}>取消</button>
+                   <button onClick={() => { setShowCloseModal(false); setClosePositionData({ id: '', code: '', name: '', qty: 0, cost: 0, sellPrice: '', sellQty: '', error: '' }); }} className={`flex-1 py-3 rounded-xl font-bold ${isDarkMode ? 'bg-[#213743] text-white' : 'bg-gray-200 text-gray-700'}`}>取消</button>
                    <button onClick={handleClosePositionSubmit} className="flex-1 py-3 bg-red-600 text-white font-bold rounded-xl shadow-lg hover:opacity-90">确认结算</button>
                 </div>
               </div>
@@ -1852,7 +2289,7 @@ ${detailStr}
           )}
 
           {showEditRealizedModal && (
-            <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={(e) => { if(e.target === e.currentTarget) setShowEditRealizedModal(false); }}>
+            <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={(e) => { if(e.target === e.currentTarget) { setShowEditRealizedModal(false); setEditRealizedValue(''); } }}>
               <div className={`${theme.modalBg} p-6 rounded-[2rem] w-full max-w-sm shadow-2xl border ${isDarkMode ? 'border-[#213743]' : ''}`}>
                 <h3 className={`text-lg font-bold mb-1 ${theme.textMain}`}>校准历史已结盈亏</h3>
                 <p className={`text-xs mb-4 ${theme.textSub}`}>手动调整历史已实现盈亏总额（正数盈利，负数亏损）</p>
@@ -1864,7 +2301,7 @@ ${detailStr}
                    </div>
                 </div>
                 <div className="flex gap-3">
-                   <button onClick={() => setShowEditRealizedModal(false)} className={`flex-1 py-3 rounded-xl font-bold ${isDarkMode ? 'bg-[#213743] text-white' : 'bg-gray-200 text-gray-700'}`}>取消</button>
+                   <button onClick={() => { setShowEditRealizedModal(false); setEditRealizedValue(''); }} className={`flex-1 py-3 rounded-xl font-bold ${isDarkMode ? 'bg-[#213743] text-white' : 'bg-gray-200 text-gray-700'}`}>取消</button>
                    <button onClick={handleEditRealizedSubmit} className="flex-1 py-3 bg-blue-600 text-white font-bold rounded-xl shadow-lg hover:opacity-90">保存</button>
                 </div>
               </div>
