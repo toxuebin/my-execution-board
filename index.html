@@ -68,6 +68,7 @@
       measurementId: "G-5QWRNPHNPY"
     };
     const defaultSyncKey = "Qianxuebin20120903";
+    const defaultAiApiKey = "sk-2f70415c18c14961a7cf637e4c675502"; // 固化阿里通义千问 API Key
 
     let storedConfig = null;
     try { 
@@ -198,8 +199,8 @@
       });
       const [syncKeyInput, setSyncKeyInput] = useState(() => localStorage.getItem('customSyncKey') || defaultSyncKey);
       const [syncDocId, setSyncDocId] = useState(null);
-      // 新增：Gemini API 密钥状态
-      const [geminiApiKeyInput, setGeminiApiKeyInput] = useState(() => localStorage.getItem('customGeminiApiKey') || '');
+      // 直接读取内置的通义千问 API 密钥
+      const [aiApiKeyInput, setAiApiKeyInput] = useState(() => localStorage.getItem('customAiApiKey') || defaultAiApiKey);
 
       const handleSaveConfig = () => {
          try {
@@ -222,8 +223,8 @@
              if (syncKeyInput.trim()) localStorage.setItem('customSyncKey', syncKeyInput.trim());
              else localStorage.setItem('customSyncKey', defaultSyncKey);
 
-             if (geminiApiKeyInput.trim()) localStorage.setItem('customGeminiApiKey', geminiApiKeyInput.trim());
-             else localStorage.removeItem('customGeminiApiKey');
+             if (aiApiKeyInput.trim()) localStorage.setItem('customAiApiKey', aiApiKeyInput.trim());
+             else localStorage.removeItem('customAiApiKey');
              
              alert('配置已保存，即将刷新页面生效！');
              window.location.reload();
@@ -586,15 +587,14 @@
           return count;
       };
 
-      // AI 视觉解析账单图片核心逻辑
+      // 核心替换：将 AI 引擎从 Google 换为国内直连的 阿里云 通义千问 (Qwen-VL)
       const handleImageUpload = async (e) => {
           const file = e.target.files[0];
           if (!file) return;
 
-          // 核心验证：检查是否是在外部环境且没有配置自定义API Key
-          const savedGeminiKey = localStorage.getItem('customGeminiApiKey') || '';
-          if (!isCanvasEnv && !savedGeminiKey) {
-              alert("当前在 GitHub 独立部署环境！\n请先点击右上角的 ☁️ (云朵图标)，去里面配置您的 Gemini API Key 才能调用 AI 大模型进行识别哦！");
+          const savedAiKey = localStorage.getItem('customAiApiKey') || defaultAiApiKey;
+          if (!savedAiKey) {
+              alert("缺少 API Key");
               return;
           }
 
@@ -609,13 +609,10 @@
                   const base64Data = reader.result.split(',')[1];
                   const mimeType = file.type;
 
-                  setRecognizeStatus('AI 正在深度解析账单明细...');
+                  setRecognizeStatus('通义千问正在深度解析账单明细...');
 
-                  const apiKey = isCanvasEnv ? "" : savedGeminiKey;
-                  // 对于普通API Key，使用极其稳定的 1.5-flash 版本
-                  const modelName = isCanvasEnv ? "gemini-2.5-flash-preview-09-2025" : "gemini-1.5-flash";
-                  const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
-
+                  // 使用阿里云 DashScope 的兼容接口，国内直连不卡顿
+                  const url = 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
                   const prompt = `你是一个专业的财务账单识别助手。请从这张账单截图中提取所有的交易记录。
 如果是微信或支付宝的账单，请注意正负号（负号或没有符号通常是支出 out，正号是收入 in）。
 如果没有年份信息，请默认使用当前系统年份 ${systemYear} 年。如果账单上有年份（如"2026年3月"），请优先使用账单上的年份。
@@ -626,24 +623,38 @@ JSON 字段要求：
 - date: 日期，严格按照格式 YYYY-MM-DD (字符串)
 - time: 时间，格式 HH:mm (字符串)
 
-示例输出必须是严格的JSON数组：
+注意：请直接输出纯 JSON 数组，不要包含任何 Markdown 格式符号（如 \`\`\`json ）或额外说明文字。
+示例输出格式：
 [
   {"desc": "成都好居有幸", "amount": 124.00, "type": "out", "date": "2026-03-03", "time": "14:11"},
   {"desc": "转账-退款", "amount": 8000.00, "type": "in", "date": "2026-03-02", "time": "01:59"}
 ]`;
 
                   const payload = {
-                      contents: [{ role: "user", parts: [{ text: prompt }, { inlineData: { mimeType: mimeType, data: base64Data } }] }],
-                      generationConfig: { responseMimeType: "application/json" }
+                      model: "qwen-vl-max", // 阿里云的旗舰视觉大模型
+                      messages: [{
+                          role: "user",
+                          content: [
+                              { type: "text", text: prompt },
+                              { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64Data}` } }
+                          ]
+                      }]
                   };
 
-                  let retries = 3;
+                  let retries = 2;
                   let delay = 1000;
                   let result = null;
 
                   while (retries > 0) {
                       try {
-                          const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                          const response = await fetch(url, { 
+                              method: 'POST', 
+                              headers: { 
+                                  'Authorization': `Bearer ${savedAiKey}`,
+                                  'Content-Type': 'application/json' 
+                              }, 
+                              body: JSON.stringify(payload) 
+                          });
                           if (!response.ok) {
                               const errData = await response.json().catch(()=>({}));
                               throw new Error(errData.error?.message || `HTTP ${response.status}`);
@@ -658,10 +669,15 @@ JSON 字段要求：
                       }
                   }
 
-                  if (result && result.candidates && result.candidates.length > 0) {
-                      const jsonText = result.candidates[0].content.parts[0].text;
+                  if (result && result.choices && result.choices.length > 0) {
+                      let textResponse = result.choices[0].message.content;
+                      
+                      // 智能提取纯 JSON，防止大模型带有废话或 Markdown 标记
+                      let jsonStr = textResponse.match(/\[.*\]/s)?.[0];
+                      if (!jsonStr) jsonStr = textResponse; 
+                      
                       try {
-                          const parsedData = JSON.parse(jsonText);
+                          const parsedData = JSON.parse(jsonStr);
                           if (Array.isArray(parsedData) && parsedData.length > 0) {
                               const count = handleBulkExpenseImport(parsedData);
                               setRecognizeStatus(`太棒了！成功导入 ${count} 笔记录 🎉`);
@@ -672,13 +688,13 @@ JSON 字段要求：
                            setRecognizeStatus('AI 返回的数据格式解析失败。');
                       }
                   } else {
-                      setRecognizeStatus('网络或识别失败，请检查您的 API 密钥是否正确配置。');
+                      setRecognizeStatus('网络或识别失败，请检查您的 API 密钥是否正确。');
                   }
                   
                   setTimeout(() => { setIsRecognizing(false); setRecognizeStatus(''); }, 4000);
               } catch (error) {
-                  console.error("OCR Error:", error);
-                  setRecognizeStatus('请求失败：请检查网络(国内需全局代理)或API密钥。');
+                  console.error("AI 识别错误:", error);
+                  setRecognizeStatus(`请求失败: ${error.message}`);
                   setTimeout(() => { setIsRecognizing(false); setRecognizeStatus(''); }, 5000);
               }
           };
@@ -1378,7 +1394,7 @@ JSON 字段要求：
                 <div className="overflow-y-auto flex-1 pr-2 space-y-4">
                     <div className={`p-4 rounded-xl text-sm ${isDarkMode ? 'bg-blue-900/20 text-blue-300' : 'bg-blue-50 text-blue-700'}`}>
                         <p className="font-bold mb-1">您的专属版本已激活 🚀</p>
-                        <p className="opacity-90">当前看板已经在底层代码中硬编码了您个人的 Firebase 数据库。您无需再做任何配置，直接开始使用即可自动实现全端云同步！</p>
+                        <p className="opacity-90">当前看板已经在底层代码中硬编码了您个人的 Firebase 数据库和 AI 接口。您无需再做任何配置，直接开始使用即可自动实现全端云同步！</p>
                     </div>
 
                     <div>
@@ -1400,17 +1416,15 @@ JSON 字段要求：
                         />
                     </div>
 
-                    {/* 新增：Gemini API Key 配置区 */}
+                    {/* 新增：阿里通义千问 API Key 配置区 */}
                     <div className="mt-4 pt-4 border-t border-gray-200 dark:border-[#213743]">
-                        <label className={`block text-xs font-bold mb-2 flex items-center gap-1 ${theme.textSub}`}><Sparkles className="w-3.5 h-3.5"/> AI 视觉大模型密钥 (Gemini API Key)</label>
+                        <label className={`block text-xs font-bold mb-2 flex items-center gap-1 ${theme.textSub}`}><Sparkles className="w-3.5 h-3.5 text-purple-500"/> 阿里通义千问 API Key (已内置)</label>
                         <input 
                             type="password"
-                            value={geminiApiKeyInput} 
-                            onChange={e => setGeminiApiKeyInput(e.target.value)}
-                            placeholder='用于账单自动识别，以 AIza 开头'
+                            value={aiApiKeyInput} 
+                            onChange={e => setAiApiKeyInput(e.target.value)}
                             className={`w-full p-3 rounded-xl border outline-none text-sm ${theme.inputBg} ${theme.textMain}`}
                         />
-                        <p className={`text-[10px] mt-1.5 ${theme.textSub}`}>没有密钥？前往 <a href="https://aistudio.google.com/app/apikey" target="_blank" className="text-blue-500 hover:underline">Google AI Studio</a> 免费申请</p>
                     </div>
                 </div>
 
