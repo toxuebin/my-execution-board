@@ -147,6 +147,9 @@
       const [viewMonth, setViewMonth] = useState(systemMonth);
       const [activeWeek, setActiveWeek] = useState(0);
       const [usdToCnyRate, setUsdToCnyRate] = useState(7.20);
+      
+      // 新增：真实天气状态
+      const [weather, setWeather] = useState({ temp: '--°C', wind: '--km/h', icon: Sun, desc: '获取中' });
 
       const [allMonthData, setAllMonthData] = useState(() => JSON.parse(localStorage.getItem('allMonthData') || '{}'));
       const [tasksCompleted, setTasksCompleted] = useState(() => JSON.parse(localStorage.getItem('tasksCompleted') || '{}'));
@@ -173,6 +176,13 @@
       const [stockData, setStockData] = useState([]);
       const [showPortfolioModal, setShowPortfolioModal] = useState(false);
       const [newPosition, setNewPosition] = useState({ code: '', quantity: '', costPrice: '' });
+      
+      // 新增：平仓与已实现盈亏状态
+      const [showCloseModal, setShowCloseModal] = useState(false);
+      const [closePositionData, setClosePositionData] = useState({ id: '', code: '', name: '', qty: 0, cost: 0, sellPrice: '', sellQty: '', error: '' });
+      const [showEditRealizedModal, setShowEditRealizedModal] = useState(false);
+      const [editRealizedValue, setEditRealizedValue] = useState('');
+
       const [newsList, setNewsList] = useState([]);
       
       // 记账本全新状态
@@ -422,6 +432,43 @@
       };
 
       useEffect(() => { setCurrentMotto(MOTTO_LIST[Math.floor(Math.random() * MOTTO_LIST.length)]); const t = setInterval(() => setCurrentTime(new Date()), 1000); return () => clearInterval(t); }, []);
+
+      // 新增：自动获取嘉兴实时天气 (使用更稳定的开源气象接口)
+      useEffect(() => {
+         const fetchWeather = async () => {
+            try {
+               // 锁定请求嘉兴坐标 (30.76, 120.75) 的气象数据，完美支持跨域
+               const res = await fetch('https://api.open-meteo.com/v1/forecast?latitude=30.76&longitude=120.75&current_weather=true&timezone=Asia%2FShanghai');
+               const data = await res.json();
+               if (data && data.current_weather) {
+                  const current = data.current_weather;
+                  const code = current.weathercode;
+                  
+                  // WMO 国际气象代码智能判断图标和中文描述
+                  let wIcon = Sun;
+                  let wDesc = '晴';
+                  
+                  if (code === 0) { wIcon = Sun; wDesc = '晴'; }
+                  else if (code === 1 || code === 2) { wIcon = Cloud; wDesc = '多云'; }
+                  else if (code === 3) { wIcon = Cloud; wDesc = '阴'; }
+                  else if (code >= 45 && code <= 48) { wIcon = Cloud; wDesc = '雾'; }
+                  else if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82)) { wIcon = CloudRain; wDesc = '雨'; }
+                  else if ((code >= 71 && code <= 77) || (code >= 85 && code <= 86)) { wIcon = Snowflake; wDesc = '雪'; }
+                  else if (code >= 95 && code <= 99) { wIcon = Zap; wDesc = '雷阵雨'; }
+                  
+                  setWeather({ 
+                      temp: `${current.temperature}°C`, 
+                      wind: `${current.windspeed}km/h`, 
+                      icon: wIcon, 
+                      desc: wDesc 
+                  });
+               }
+            } catch (e) { console.warn("实时天气获取失败，请检查网络", e); }
+         };
+         fetchWeather();
+         const timer = setInterval(fetchWeather, 3600000); // 后台每 1 小时自动静默刷新一次
+         return () => clearInterval(timer);
+      }, []);
 
       useEffect(() => {
         const fallbackTimer = setTimeout(() => { setLoading(false); }, 4000); 
@@ -925,6 +972,58 @@ ${detailStr}
           return (isNegative ? '-' : '') + currencySymbol + formatted;
       };
 
+      // 新增：提交平仓结算，自动将盈亏计入底层
+      const handleClosePositionSubmit = () => {
+          const sellP = parseFloat(closePositionData.sellPrice);
+          const sellQ = parseFloat(closePositionData.sellQty);
+          if (isNaN(sellP) || isNaN(sellQ) || sellQ <= 0 || sellQ > closePositionData.qty) {
+              setClosePositionData(prev => ({...prev, error: '请输入有效的卖出价格和数量'}));
+              return;
+          }
+          const action = () => {
+              const realizedPnLThisTrade = (sellP - closePositionData.cost) * sellQ;
+              const currentMarketInvestments = investments[investMarket] || { initialCapital: 0, records: {} };
+              const currentRealized = currentMarketInvestments.realizedPnL || 0;
+              
+              const newInvestments = {
+                  ...investments,
+                  [investMarket]: {
+                      ...currentMarketInvestments,
+                      realizedPnL: currentRealized + realizedPnLThisTrade
+                  }
+              };
+
+              let newPortfolio = [...portfolio];
+              if (sellQ === closePositionData.qty) {
+                  newPortfolio = newPortfolio.filter(p => p.id !== closePositionData.id); // 全量平仓则移除
+              } else {
+                  newPortfolio = newPortfolio.map(p => 
+                      p.id === closePositionData.id ? { ...p, quantity: p.quantity - sellQ } : p // 部分平仓则扣减数量
+                  );
+              }
+
+              saveData({ investments: newInvestments, portfolio: newPortfolio });
+              setShowCloseModal(false);
+          };
+          requireAuth(action)();
+      };
+
+      // 新增：手动校准历史盈亏
+      const handleEditRealizedSubmit = () => {
+          const val = parseFloat(editRealizedValue);
+          if (isNaN(val)) return;
+          const action = () => {
+              const currentMarketInvestments = investments[investMarket] || { initialCapital: 0, records: {} };
+              const newInvestments = {
+                  ...investments,
+                  [investMarket]: { ...currentMarketInvestments, realizedPnL: val }
+              };
+              saveData({ investments: newInvestments });
+              setShowEditRealizedModal(false);
+          };
+          requireAuth(action)();
+      };
+
       const handleAddPosition = () => {
          const code = newPosition.code.trim().toLowerCase();
          const qty = parseFloat(newPosition.quantity);
@@ -1039,7 +1138,9 @@ ${detailStr}
           totalMarketValue += mv; totalCost += cst; todayPnL += todayItemPnL;
           return { ...item, sData, price, change, mv, cst, pnl, todayItemPnL };
       });
-      const totalPnL = totalMarketValue - totalCost;
+      const totalUnrealizedPnL = totalMarketValue - totalCost; // 持仓浮动盈亏
+      const realizedPnL = investments[investMarket]?.realizedPnL || 0; // 已结历史盈亏
+      const totalPnL = totalUnrealizedPnL + realizedPnL; // 绝对总盈亏
 
       // AI 生成股票持仓诊断报告
       const handleInvestAIAnalysis = async () => {
@@ -1061,7 +1162,7 @@ ${detailStr}
 
               const currency = investMarket === 'US' ? '美元' : '人民币';
               const detailStr = enrichedPortfolio.map(item =>
-                  `- ${item.sData.name || item.code} (${item.code.toUpperCase()})：数量 ${item.quantity}，成本价 ${item.costPrice}，现价 ${item.price.toFixed(2)}，持仓市值 ${item.mv.toFixed(2)}，总盈亏 ${item.pnl.toFixed(2)}`
+                  `- ${item.sData.name || item.code} (${item.code.toUpperCase()})：数量 ${item.quantity}，成本价 ${item.costPrice}，现价 ${item.price.toFixed(2)}，持仓市值 ${item.mv.toFixed(2)}，浮动盈亏 ${item.pnl.toFixed(2)}`
               ).join('\n');
 
               const prompt = `你是一位华尔街顶级的量化分析师和财富管理专家。请根据我当前的股票持仓和盈亏数据，进行深度的投资诊断。
@@ -1070,7 +1171,7 @@ ${detailStr}
 计价货币：${currency}
 总市值：${totalMarketValue.toFixed(2)}
 总成本：${totalCost.toFixed(2)}
-累计总盈亏：${totalPnL.toFixed(2)}
+累计总盈亏：${totalPnL.toFixed(2)} （含已结盈亏：${realizedPnL.toFixed(2)}，持仓浮动盈亏：${totalUnrealizedPnL.toFixed(2)}）
 今日浮动盈亏：${todayPnL.toFixed(2)}
 
 【当前持仓明细】
@@ -1146,11 +1247,12 @@ ${detailStr}
                     <span className={`text-[11px] font-black ${isDarkMode ? 'text-[#34c759]' : 'text-blue-600'}`}>{["周日","周一","周二","周三","周四","周五","周六"][currentTime.getDay()]}</span>
                     <span className={`text-xs font-bold font-mono ${theme.textMain}`}>{currentTime.toLocaleTimeString('zh-CN', { hour12: false })}</span>
                   </div>
-                  <div className={`flex items-center gap-3 px-4 py-1.5 rounded-full shadow-sm ${theme.card}`}>
-                    <Sun className="w-3.5 h-3.5 text-yellow-500 animate-spin-slow" />
-                    <span className={`text-[11px] font-bold ${theme.textMain}`}>16°C</span>
+                  <div className={`flex items-center gap-3 px-4 py-1.5 rounded-full shadow-sm ${theme.card}`} title={`嘉兴实时天气: ${weather.desc}`}>
+                    <span className={`text-[10px] font-black ${theme.textSub}`}>嘉兴</span>
+                    <weather.icon className={`w-3.5 h-3.5 ${weather.icon === Sun ? 'text-yellow-500 animate-spin-slow' : 'text-blue-400'}`} />
+                    <span className={`text-[11px] font-bold ${theme.textMain}`}>{weather.temp}</span>
                     <div className={`w-[1px] h-3 ${isDarkMode ? 'bg-white/10' : 'bg-slate-300'}`} />
-                    <span className={`text-[10px] font-bold flex items-center gap-1 ${theme.textMain} opacity-80`}><Wind className="w-3 h-3 text-blue-400" /> 15km/h</span>
+                    <span className={`text-[10px] font-bold flex items-center gap-1 ${theme.textMain} opacity-80`}><Wind className="w-3 h-3 text-blue-400" /> {weather.wind}</span>
                   </div>
                 </div>
               </div>
@@ -1290,9 +1392,15 @@ ${detailStr}
                                 <div className={`text-[10px] md:text-xs font-bold mb-1 ${theme.textSub}`}>今日盈亏 {investMarket === 'US' ? '(美元)' : '(人民币)'}</div>
                                 <div className={`text-lg md:text-2xl font-black font-mono tracking-tighter ${todayPnL >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>{formatInvestNum(todayPnL, false, investMarket === 'US' ? '$' : '¥')}</div>
                             </div>
-                            <div className="border-l border-dashed pl-3 border-gray-300 dark:border-gray-700">
-                                <div className={`text-[10px] md:text-xs font-bold mb-1 ${theme.textSub}`}>累计盈亏 {investMarket === 'US' ? '(美元)' : '(人民币)'}</div>
+                            <div className="border-l border-dashed pl-3 border-gray-300 dark:border-gray-700 relative group">
+                                <div className={`text-[10px] md:text-xs font-bold mb-1 flex items-center gap-1 ${theme.textSub}`}>
+                                    累计盈亏 {investMarket === 'US' ? '(美元)' : '(人民币)'}
+                                    <button onClick={() => { setEditRealizedValue(realizedPnL); setShowEditRealizedModal(true); }} className="p-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors" title="校准已结历史盈亏">
+                                        <Edit2 className="w-3 h-3" />
+                                    </button>
+                                </div>
                                 <div className={`text-lg md:text-2xl font-black font-mono tracking-tighter ${totalPnL >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>{formatInvestNum(totalPnL, false, investMarket === 'US' ? '$' : '¥')}</div>
+                                <div className={`text-[9px] mt-0.5 font-bold ${theme.textSub}`}>浮动 {formatInvestNum(totalUnrealizedPnL, false, '')} | 已结 {formatInvestNum(realizedPnL, false, '')}</div>
                             </div>
                         </div>
                         <div className="space-y-2 mb-6 relative">
@@ -1306,12 +1414,18 @@ ${detailStr}
                                      <div className={`text-xs font-mono font-bold ${item.change >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>{item.price > 0 ? (item.market === 'US' ? '$' : '¥') + item.price.toFixed(2) : '--'}</div>
                                      <div className={`text-[9px] mt-0.5 ${theme.textSub}`}>成本 {item.market === 'US' ? '$' : '¥'}{item.costPrice}</div>
                                   </div>
-                                  <div className="w-[30%] text-right">
+                                  <div className="w-[25%] text-right">
                                      <div className={`text-xs font-mono font-bold ${item.todayItemPnL >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>{formatInvestNum(item.todayItemPnL, false, item.market === 'US' ? '$' : '¥')}</div>
                                      <div className={`text-[9px] mt-0.5 font-bold ${theme.textSub}`}>市值 {formatInvestNum(item.mv, false, item.market === 'US' ? '$' : '¥')}</div>
-                                     <div className={`text-[9px] mt-0.5 font-bold ${item.pnl >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>总盈亏 {formatInvestNum(item.pnl, false, item.market === 'US' ? '$' : '¥')}</div>
+                                     <div className={`text-[9px] mt-0.5 font-bold ${item.pnl >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>浮动 {formatInvestNum(item.pnl, false, item.market === 'US' ? '$' : '¥')}</div>
                                   </div>
-                                  <button onClick={() => handleRemovePosition(item.id)} className="text-gray-400 hover:text-red-500"><Trash2 className="w-4 h-4"/></button>
+                                  <div className="w-[15%] flex flex-col items-end gap-2 pr-1">
+                                      <button onClick={() => {
+                                          setClosePositionData({ id: item.id, code: item.code, name: item.sData.name, qty: item.quantity, cost: item.costPrice, sellPrice: item.price, sellQty: item.quantity, error: '' });
+                                          setShowCloseModal(true);
+                                      }} className={`text-[10px] font-bold px-2 py-1 rounded shadow-sm ${isDarkMode ? 'bg-blue-900/30 text-blue-400' : 'bg-blue-50 text-blue-600'} hover:opacity-80 active:scale-95`}>平仓</button>
+                                      <button onClick={() => handleRemovePosition(item.id)} className="text-gray-400 hover:text-red-500"><Trash2 className="w-3.5 h-3.5"/></button>
+                                  </div>
                                </div>
                             ))}
                         </div>
@@ -1695,6 +1809,64 @@ ${detailStr}
                    <input type="number" placeholder="成本价" value={newPosition.costPrice} onChange={e=>setNewPosition({...newPosition, costPrice: e.target.value})} className={`w-full px-4 py-3 rounded-xl border ${theme.inputBg} ${theme.textMain}`} />
                 </div>
                 <button onClick={handleAddPosition} className="w-full py-3 bg-red-600 text-white font-bold rounded-xl">确定</button>
+              </div>
+            </div>
+          )}
+
+          {showCloseModal && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={(e) => { if(e.target === e.currentTarget) setShowCloseModal(false); }}>
+              <div className={`${theme.modalBg} p-6 rounded-[2rem] w-full max-w-sm shadow-2xl border ${isDarkMode ? 'border-[#213743]' : ''}`}>
+                <h3 className={`text-lg font-bold mb-1 ${theme.textMain}`}>平仓 / 调仓结算</h3>
+                <p className={`text-xs mb-4 ${theme.textSub}`}>结算的盈亏将自动计入“已结历史盈亏”中，防止换仓后利润丢失。</p>
+                
+                <div className={`p-3 rounded-xl mb-4 text-sm font-bold border flex justify-between items-center ${isDarkMode ? 'bg-[#1a2c38] border-[#213743]' : 'bg-gray-50 border-gray-200'} ${theme.textMain}`}>
+                    <span>{closePositionData.name || closePositionData.code.toUpperCase()}</span>
+                    <span className="text-[10px] font-normal text-gray-500">持仓: {closePositionData.qty} | 成本: {closePositionData.cost}</span>
+                </div>
+
+                <div className="space-y-4 mb-6">
+                   <div className="flex flex-col gap-1">
+                      <label className={`text-xs font-bold px-1 ${theme.textSub}`}>卖出价格</label>
+                      <input type="number" step="0.001" value={closePositionData.sellPrice} onChange={e=>setClosePositionData({...closePositionData, sellPrice: e.target.value, error: ''})} className={`w-full px-4 py-3 rounded-xl border ${theme.inputBg} ${theme.textMain}`} />
+                   </div>
+                   <div className="flex flex-col gap-1">
+                      <label className={`text-xs font-bold px-1 ${theme.textSub}`}>卖出数量 (最大 {closePositionData.qty})</label>
+                      <input type="number" value={closePositionData.sellQty} onChange={e=>setClosePositionData({...closePositionData, sellQty: e.target.value, error: ''})} className={`w-full px-4 py-3 rounded-xl border ${theme.inputBg} ${theme.textMain}`} />
+                   </div>
+                   
+                   {closePositionData.error && <div className="text-xs text-red-500 font-bold px-1">{closePositionData.error}</div>}
+
+                   <div className="flex justify-between items-center px-1 pt-2 border-t border-dashed border-gray-300 dark:border-gray-700">
+                       <span className={`text-xs font-bold ${theme.textSub}`}>本次结转已实现盈亏:</span>
+                       <span className={`text-base font-black font-mono ${((parseFloat(closePositionData.sellPrice||0) - closePositionData.cost) * parseFloat(closePositionData.sellQty||0)) >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>
+                           {formatInvestNum((parseFloat(closePositionData.sellPrice||0) - closePositionData.cost) * parseFloat(closePositionData.sellQty||0), false, investMarket==='US'?'$':'¥')}
+                       </span>
+                   </div>
+                </div>
+                <div className="flex gap-3">
+                   <button onClick={() => setShowCloseModal(false)} className={`flex-1 py-3 rounded-xl font-bold ${isDarkMode ? 'bg-[#213743] text-white' : 'bg-gray-200 text-gray-700'}`}>取消</button>
+                   <button onClick={handleClosePositionSubmit} className="flex-1 py-3 bg-red-600 text-white font-bold rounded-xl shadow-lg hover:opacity-90">确认结算</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {showEditRealizedModal && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={(e) => { if(e.target === e.currentTarget) setShowEditRealizedModal(false); }}>
+              <div className={`${theme.modalBg} p-6 rounded-[2rem] w-full max-w-sm shadow-2xl border ${isDarkMode ? 'border-[#213743]' : ''}`}>
+                <h3 className={`text-lg font-bold mb-1 ${theme.textMain}`}>校准历史已结盈亏</h3>
+                <p className={`text-xs mb-4 ${theme.textSub}`}>手动调整历史已实现盈亏总额（正数盈利，负数亏损）</p>
+                
+                <div className="space-y-4 mb-6">
+                   <div className="flex flex-col gap-1">
+                       <label className={`text-xs font-bold px-1 ${theme.textSub}`}>{investMarket === 'US' ? '美股' : 'A股'} 历史盈亏</label>
+                       <input type="number" value={editRealizedValue} onChange={e=>setEditRealizedValue(e.target.value)} placeholder="例如: 5000 或 -2000" className={`w-full px-4 py-3 rounded-xl border font-mono ${theme.inputBg} ${theme.textMain}`} />
+                   </div>
+                </div>
+                <div className="flex gap-3">
+                   <button onClick={() => setShowEditRealizedModal(false)} className={`flex-1 py-3 rounded-xl font-bold ${isDarkMode ? 'bg-[#213743] text-white' : 'bg-gray-200 text-gray-700'}`}>取消</button>
+                   <button onClick={handleEditRealizedSubmit} className="flex-1 py-3 bg-blue-600 text-white font-bold rounded-xl shadow-lg hover:opacity-90">保存</button>
+                </div>
               </div>
             </div>
           )}
