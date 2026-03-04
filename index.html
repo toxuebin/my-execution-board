@@ -258,19 +258,56 @@
           .catch(() => console.log('使用默认汇率 7.2'));
       }, []);
 
+      // 核心修复：解决美股（如 ussoxl）数据抓取和大小写识别的痛点
       useEffect(() => {
          const fetchStocks = () => {
-             const activeCodes = [...new Set([...portfolio.map(p => p.code), 'sh000001', 'usDJI'])];
+             const baseCodes = [...new Set([...portfolio.map(p => p.code), 'sh000001', 'usDJI'])];
+             
+             // 腾讯接口对于美股严格要求“us+大写后缀”，必须在这里请求前拦截并格式化
+             const fetchCodes = baseCodes.map(code => {
+                 let lower = code.toLowerCase();
+                 if (lower.startsWith('us')) return 'us' + lower.slice(2).toUpperCase();
+                 if (lower.startsWith('hk')) return 'hk' + lower.slice(2).toUpperCase();
+                 return lower; // A股保持小写
+             });
+
              const script = document.createElement('script');
-             script.src = `https://qt.gtimg.cn/q=${activeCodes.join(',')}&_t=${Date.now()}`;
+             script.src = `https://qt.gtimg.cn/q=${fetchCodes.join(',')}&_t=${Date.now()}`;
              script.onload = () => {
                  const res = [];
-                 activeCodes.forEach(code => {
-                     const varName = `v_${code}`;
-                     if(window[varName]) {
-                         const data = window[varName].split('~');
-                         if(data.length > 30) {
-                             res.push({ code, name: data[1], price: data[3], change: data[31], changePct: data[32] });
+                 baseCodes.forEach((originalCode, index) => {
+                     const fCode = fetchCodes[index];
+                     // 腾讯返回的变量名严格对应请求的参数名
+                     const varName = `v_${fCode}`;
+                     const dataStr = window[varName];
+
+                     if (dataStr) {
+                         const data = dataStr.split('~');
+                         if (data.length > 5) {
+                             let name = data[1]; // 获取真实的股票中文名或主名称
+                             const currentPrice = parseFloat(data[3]);
+                             const prevClose = parseFloat(data[4]);
+                             let change = parseFloat(data[31]);
+                             let changePct = parseFloat(data[32]);
+                             
+                             // 兼容性计算（如果部分美股接口缺失 31/32 字段，手动用昨日收盘价算涨跌）
+                             if (isNaN(change) || isNaN(changePct)) {
+                                 if (!isNaN(currentPrice) && !isNaN(prevClose) && prevClose !== 0) {
+                                     change = currentPrice - prevClose;
+                                     changePct = (change / prevClose) * 100;
+                                 } else {
+                                     change = 0;
+                                     changePct = 0;
+                                 }
+                             }
+
+                             res.push({ 
+                                 code: originalCode, // 保留原始小写代码（如 ussoxl）以便和列表无缝匹配
+                                 name: name, 
+                                 price: currentPrice, 
+                                 change: change.toFixed(3), 
+                                 changePct: changePct.toFixed(2) 
+                             });
                          }
                      }
                  });
@@ -1054,7 +1091,12 @@
                         <button onClick={() => setActiveClientForFollowUp(null)} className="flex items-center gap-2 text-purple-500 font-bold"><ArrowLeft className="w-4 h-4" /> 返回列表</button>
                         <div className={`p-5 rounded-2xl border ${isDarkMode?'bg-[#0f212e] border-[#213743]':'bg-gray-50'}`}>
                            <div className={`text-xl font-bold ${theme.textMain}`}>{activeClientForFollowUp.name}</div>
-                           <div className={`text-sm ${theme.textSub}`}>{activeClientForFollowUp.phone} {activeClientForFollowUp.location}</div>
+                           <div className={`text-sm mt-1 flex items-center gap-2 ${theme.textSub}`}>
+                             <a href={`tel:${activeClientForFollowUp.phone}`} className="text-blue-500 font-bold hover:underline flex items-center gap-1" onClick={e => e.stopPropagation()}>
+                               <Phone className="w-3.5 h-3.5" /> {activeClientForFollowUp.phone}
+                             </a>
+                             <span>{activeClientForFollowUp.location}</span>
+                           </div>
                         </div>
                         <div className="flex gap-2">
                           <input type="text" placeholder="输入跟进记录..." value={newFollowUp} onChange={(e) => setNewFollowUp(e.target.value)} className={`flex-1 px-4 py-3 rounded-xl border ${theme.inputBg} ${theme.textMain}`} />
@@ -1100,7 +1142,12 @@
                             </div>
                             <div>
                                 <div className={`font-bold ${theme.textMain}`}>{client.name}</div>
-                                <div className={`text-xs ${theme.textSub}`}>{client.phone} · {client.date}</div>
+                                <div className={`text-xs mt-0.5 flex items-center gap-1 ${theme.textSub}`}>
+                                    <a href={`tel:${client.phone}`} className="text-blue-500 hover:underline flex items-center gap-0.5" onClick={e => e.stopPropagation()}>
+                                        <Phone className="w-3 h-3" /> {client.phone}
+                                    </a>
+                                    <span>· {client.date}</span>
+                                </div>
                             </div>
                           </div>
                           <ChevronRight className="w-4 h-4 text-gray-400" />
@@ -1118,7 +1165,7 @@
               <div className={`${theme.modalBg} p-6 rounded-[2rem] w-full max-w-sm shadow-2xl border ${isDarkMode ? 'border-[#213743]' : ''}`}>
                 <h3 className={`text-lg font-bold mb-4 ${theme.textMain}`}>录入持仓</h3>
                 <div className="space-y-4 mb-6">
-                   <input type="text" placeholder="代码(如: sh600519)" value={newPosition.code} onChange={e=>setNewPosition({...newPosition, code: e.target.value})} className={`w-full px-4 py-3 rounded-xl border ${theme.inputBg} ${theme.textMain}`} />
+                   <input type="text" placeholder="代码(如: sh600519或usAAPL)" value={newPosition.code} onChange={e=>setNewPosition({...newPosition, code: e.target.value})} className={`w-full px-4 py-3 rounded-xl border ${theme.inputBg} ${theme.textMain}`} />
                    <input type="number" placeholder="数量" value={newPosition.quantity} onChange={e=>setNewPosition({...newPosition, quantity: e.target.value})} className={`w-full px-4 py-3 rounded-xl border ${theme.inputBg} ${theme.textMain}`} />
                    <input type="number" placeholder="成本价" value={newPosition.costPrice} onChange={e=>setNewPosition({...newPosition, costPrice: e.target.value})} className={`w-full px-4 py-3 rounded-xl border ${theme.inputBg} ${theme.textMain}`} />
                 </div>
