@@ -198,6 +198,8 @@
       });
       const [syncKeyInput, setSyncKeyInput] = useState(() => localStorage.getItem('customSyncKey') || defaultSyncKey);
       const [syncDocId, setSyncDocId] = useState(null);
+      // 新增：Gemini API 密钥状态
+      const [geminiApiKeyInput, setGeminiApiKeyInput] = useState(() => localStorage.getItem('customGeminiApiKey') || '');
 
       const handleSaveConfig = () => {
          try {
@@ -219,6 +221,9 @@
              
              if (syncKeyInput.trim()) localStorage.setItem('customSyncKey', syncKeyInput.trim());
              else localStorage.setItem('customSyncKey', defaultSyncKey);
+
+             if (geminiApiKeyInput.trim()) localStorage.setItem('customGeminiApiKey', geminiApiKeyInput.trim());
+             else localStorage.removeItem('customGeminiApiKey');
              
              alert('配置已保存，即将刷新页面生效！');
              window.location.reload();
@@ -586,6 +591,13 @@
           const file = e.target.files[0];
           if (!file) return;
 
+          // 核心验证：检查是否是在外部环境且没有配置自定义API Key
+          const savedGeminiKey = localStorage.getItem('customGeminiApiKey') || '';
+          if (!isCanvasEnv && !savedGeminiKey) {
+              alert("当前在 GitHub 独立部署环境！\n请先点击右上角的 ☁️ (云朵图标)，去里面配置您的 Gemini API Key 才能调用 AI 大模型进行识别哦！");
+              return;
+          }
+
           setIsRecognizing(true);
           setRecognizeStatus('正在读取图片...');
 
@@ -598,8 +610,10 @@
 
                   setRecognizeStatus('AI 正在深度解析账单明细...');
 
-                  const apiKey = ""; // 环境自动注入
-                  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+                  const apiKey = isCanvasEnv ? "" : savedGeminiKey;
+                  // 对于普通API Key，使用极其稳定的 1.5-flash 版本
+                  const modelName = isCanvasEnv ? "gemini-2.5-flash-preview-09-2025" : "gemini-1.5-flash";
+                  const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
 
                   const prompt = `你是一个专业的财务账单识别助手。请从这张账单截图中提取所有的交易记录。
 如果是微信或支付宝的账单，请注意正负号（负号或没有符号通常是支出 out，正号是收入 in）。
@@ -654,7 +668,7 @@ JSON 字段要求：
                            setRecognizeStatus('AI 返回的数据格式解析失败。');
                       }
                   } else {
-                      setRecognizeStatus('网络或识别失败，请重试。');
+                      setRecognizeStatus('网络或识别失败，请检查您的 API 密钥是否正确配置。');
                   }
                   
                   setTimeout(() => { setIsRecognizing(false); setRecognizeStatus(''); }, 4000);
@@ -1375,6 +1389,19 @@ JSON 字段要求：
                             onChange={e => setSyncKeyInput(e.target.value)}
                             className={`w-full p-3 rounded-xl border outline-none text-sm ${theme.inputBg} ${theme.textMain}`}
                         />
+                    </div>
+
+                    {/* 新增：Gemini API Key 配置区 */}
+                    <div className="mt-4 pt-4 border-t border-gray-200 dark:border-[#213743]">
+                        <label className={`block text-xs font-bold mb-2 flex items-center gap-1 ${theme.textSub}`}><Sparkles className="w-3.5 h-3.5"/> AI 视觉大模型密钥 (Gemini API Key)</label>
+                        <input 
+                            type="password"
+                            value={geminiApiKeyInput} 
+                            onChange={e => setGeminiApiKeyInput(e.target.value)}
+                            placeholder='用于账单自动识别，以 AIza 开头'
+                            className={`w-full p-3 rounded-xl border outline-none text-sm ${theme.inputBg} ${theme.textMain}`}
+                        />
+                        <p className={`text-[10px] mt-1.5 ${theme.textSub}`}>没有密钥？前往 <a href="https://aistudio.google.com/app/apikey" target="_blank" className="text-blue-500 hover:underline">Google AI Studio</a> 免费申请</p>
                     </div>
                 </div>
 
