@@ -61,7 +61,7 @@
       CloudRain, Wind, Droplets, ThermometerSun, Palmtree, Snowflake, Leaf, Flower2,
       Lock, Unlock, Plus, Minus, History, ArrowLeft, Phone, Calendar, Trash2, Edit2, AlertCircle, Star, BellRing, DownloadCloud, Cake,
       Wallet, Receipt, TrendingUp, TrendingDown, Share, Settings, Wand2, Film, PlayCircle,
-      Activity, Globe, ExternalLink, List, UserPlus2, PieChart, Eye, EyeOff, Cloud, Key, UploadCloud, Image, BrainCircuit, Radar
+      Activity, Globe, ExternalLink, List, UserPlus2, PieChart, Eye, EyeOff, Cloud, Key, UploadCloud, Image, BrainCircuit, Radar, MapPin
     } = LucideIcons;
 
     // --- 核心修改区：直接固化你的专属配置 ---
@@ -163,7 +163,7 @@
       const [polyLoading, setPolyLoading] = useState(true);
       const [polyError, setPolyError] = useState('');
       
-      // 新增：AI 翻译缓存状态 (优先从本地读取)
+      // AI 翻译缓存状态 (优先从本地读取)
       const [polyTranslations, setPolyTranslations] = useState(() => JSON.parse(localStorage.getItem('polyTranslations') || '{}'));
 
       const [allMonthData, setAllMonthData] = useState(() => JSON.parse(localStorage.getItem('allMonthData') || '{}'));
@@ -223,6 +223,12 @@
       const [activeClientForFollowUp, setActiveClientForFollowUp] = useState(null);
       const [newFollowUp, setNewFollowUp] = useState('');
       const queryTimeoutRef = useRef(null);
+
+      // 编辑客户与跟进记录的状态控制
+      const [isEditingClient, setIsEditingClient] = useState(false);
+      const [editClientData, setEditClientData] = useState({});
+      const [editingFollowUpId, setEditingFollowUpId] = useState(null);
+      const [editFollowUpText, setEditFollowUpText] = useState('');
 
       const [showSettingsModal, setShowSettingsModal] = useState(false);
       const [customConfigInput, setCustomConfigInput] = useState(() => {
@@ -467,7 +473,8 @@
               setPolyError('');
               
               try {
-                  const targetUrl = 'https://gamma-api.polymarket.com/markets?limit=30&active=true&closed=false&order=volumeNum&ascending=false';
+                  // 抓取实时最热榜单
+                  const targetUrl = 'https://gamma-api.polymarket.com/markets?limit=30&active=true&closed=false&order=volume24hr&ascending=false';
                   
                   const proxies = [
                       { name: 'Direct', url: targetUrl }, 
@@ -647,20 +654,75 @@
          return `https://xueqiu.com/S/${code.toUpperCase()}`;
       };
 
-      const queryPhoneLocationReal = async (phone) => {
+      // 手机归属地极速查询 (采用 "外部API + LocalStorage 前端级Redis缓存" 策略)
+      const queryPhoneLocationReal = async (phone, isEdit = false) => {
         if(phone.length !== 11) return;
+        
+        // 1. 尝试从本地“Redis缓存”读取
+        const cacheKey = `phone_loc_${phone}`;
+        const cachedLoc = localStorage.getItem(cacheKey);
+        
+        if (cachedLoc) {
+            if (isEdit) setEditClientData(prev => ({...prev, location: cachedLoc}));
+            else setPhoneLocation(cachedLoc);
+            return; // 命中缓存，直接结束，不消耗API
+        }
+
+        // 2. 如果缓存没有，再调用网络 API 获取
         try {
            const res = await fetch(`https://api.vvhan.com/api/phone?tel=${phone}`);
            const data = await res.json();
-           if (data.success && data.info) setPhoneLocation(`${data.info.prov} ${data.info.city}`.trim());
-        } catch(e) {}
+           if (data.success && data.info) {
+               const loc = `${data.info.prov} ${data.info.city}`.trim();
+               if (isEdit) setEditClientData(prev => ({...prev, location: loc}));
+               else setPhoneLocation(loc);
+               // 获取成功后，立刻写入本地缓存池
+               localStorage.setItem(cacheKey, loc);
+           }
+        } catch(e) { console.warn("Location query failed"); }
       };
 
-      const handlePhoneChange = (e) => {
+      const handlePhoneChange = (e, isEdit = false) => {
         const val = e.target.value.replace(/\D/g, '').substring(0, 11);
-        setNewClient({...newClient, phone: val});
+        
+        if (isEdit) {
+            setEditClientData({...editClientData, phone: val});
+        } else {
+            setNewClient({...newClient, phone: val});
+        }
+
         if (queryTimeoutRef.current) clearTimeout(queryTimeoutRef.current);
-        if(val.length === 11) queryTimeoutRef.current = setTimeout(() => queryPhoneLocationReal(val), 600);
+        if(val.length === 11) queryTimeoutRef.current = setTimeout(() => queryPhoneLocationReal(val, isEdit), 600);
+      };
+
+      // 新增：保存客户基础信息修改
+      const saveClientEdit = () => {
+        if (!editClientData.name) return alert("姓名不能为空");
+        const action = () => {
+            const updatedClients = clients.map(c => c.id === activeClientForFollowUp.id ? { ...c, ...editClientData } : c);
+            saveData({ clients: updatedClients });
+            setActiveClientForFollowUp({ ...activeClientForFollowUp, ...editClientData });
+            setIsEditingClient(false);
+        };
+        requireAuth(action)();
+      };
+
+      // 新增：保存跟进记录修改
+      const saveFollowUpEdit = (fuId) => {
+        if (!editFollowUpText.trim()) return;
+        const action = () => {
+            const updatedClients = clients.map(c => {
+                if (c.id === activeClientForFollowUp.id) {
+                    return { ...c, followUps: (c.followUps || []).map(fu => fu.id === fuId ? { ...fu, text: editFollowUpText } : fu) };
+                }
+                return c;
+            });
+            saveData({ clients: updatedClients });
+            setActiveClientForFollowUp(updatedClients.find(c => c.id === activeClientForFollowUp.id));
+            setEditingFollowUpId(null);
+            setEditFollowUpText('');
+        };
+        requireAuth(action)();
       };
 
       useEffect(() => { setCurrentMotto(MOTTO_LIST[Math.floor(Math.random() * MOTTO_LIST.length)]); const t = setInterval(() => setCurrentTime(new Date()), 1000); return () => clearInterval(t); }, []);
@@ -1608,56 +1670,72 @@ ${detailStr}
 
                    {showPortfolioDetails && (
                      <div className="animate-in fade-in slide-in-from-top-2 duration-300">
-                        <div className={`grid grid-cols-3 gap-3 md:gap-5 mb-5 p-4 md:p-6 rounded-[1.5rem] border ${isDarkMode ? 'bg-[#0f212e]/50 border-[#213743]' : 'bg-gray-50/50 border-gray-100'}`}>
-                            <div>
-                                <div className={`text-[10px] md:text-xs font-bold mb-1 ${theme.textSub}`}>总市值 {investMarket === 'US' ? '(美元)' : '(人民币)'}</div>
-                                <div className={`text-lg md:text-2xl font-black font-mono tracking-tighter ${theme.textMain}`}>{formatInvestNum(totalMarketValue, false, investMarket === 'US' ? '$' : '¥')}</div>
-                            </div>
-                            <div className="border-l border-dashed pl-3 border-gray-300 dark:border-gray-700">
-                                <div className={`text-[10px] md:text-xs font-bold mb-1 ${theme.textSub}`}>今日盈亏</div>
-                                <div className="flex items-baseline gap-1">
-                                    <div className={`text-lg md:text-2xl font-black font-mono tracking-tighter ${todayPnL >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>{formatInvestNum(todayPnL, false, investMarket === 'US' ? '$' : '¥')}</div>
-                                    <div className={`text-[10px] font-bold ${todayPnLPct >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>{todayPnLPct >= 0 ? '+' : ''}{todayPnLPct.toFixed(2)}%</div>
+                        <div className={`grid grid-cols-3 gap-2 md:gap-5 mb-5 p-3 md:p-6 rounded-[1.5rem] border ${isDarkMode ? 'bg-[#0f212e]/50 border-[#213743]' : 'bg-gray-50/50 border-gray-100'}`}>
+                            <div className="flex flex-col justify-start">
+                                <div className={`text-[10px] md:text-xs font-bold mb-1 ${theme.textSub} whitespace-nowrap`}>总市值 {investMarket === 'US' ? '(美元)' : '(人民币)'}</div>
+                                <div className={`text-sm sm:text-base md:text-xl lg:text-2xl font-black font-mono tracking-tighter ${theme.textMain} break-all`}>
+                                    {formatInvestNum(totalMarketValue, false, investMarket === 'US' ? '$' : '¥')}
                                 </div>
                             </div>
-                            <div className="border-l border-dashed pl-3 border-gray-300 dark:border-gray-700 relative group">
-                                <div className={`text-[10px] md:text-xs font-bold mb-1 flex items-center gap-1 ${theme.textSub}`}>
+                            <div className="flex flex-col justify-start border-l border-dashed pl-2 md:pl-3 border-gray-300 dark:border-gray-700">
+                                <div className={`text-[10px] md:text-xs font-bold mb-1 ${theme.textSub} whitespace-nowrap`}>今日盈亏</div>
+                                <div className="flex flex-wrap items-baseline gap-x-1">
+                                    <span className={`text-sm sm:text-base md:text-xl lg:text-2xl font-black font-mono tracking-tighter whitespace-nowrap ${todayPnL >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>
+                                        {formatInvestNum(todayPnL, false, investMarket === 'US' ? '$' : '¥')}
+                                    </span>
+                                    <span className={`text-[9px] md:text-[10px] font-bold whitespace-nowrap ${todayPnLPct >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>
+                                        {todayPnLPct >= 0 ? '+' : ''}{todayPnLPct.toFixed(2)}%
+                                    </span>
+                                </div>
+                            </div>
+                            <div className="flex flex-col justify-start border-l border-dashed pl-2 md:pl-3 border-gray-300 dark:border-gray-700 relative group overflow-hidden">
+                                <div className={`text-[10px] md:text-xs font-bold mb-1 flex items-center gap-1 ${theme.textSub} whitespace-nowrap`}>
                                     累计盈亏
                                     <button onClick={() => { setEditRealizedValue(realizedPnL); setShowEditRealizedModal(true); }} className="p-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors" title="校准已结历史盈亏">
                                         <Edit2 className="w-3 h-3" />
                                     </button>
                                 </div>
-                                <div className="flex items-baseline gap-1">
-                                    <div className={`text-lg md:text-2xl font-black font-mono tracking-tighter ${totalPnL >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>{formatInvestNum(totalPnL, false, investMarket === 'US' ? '$' : '¥')}</div>
-                                    <div className={`text-[10px] font-bold ${totalPnLPct >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>{totalPnLPct >= 0 ? '+' : ''}{totalPnLPct.toFixed(2)}%</div>
+                                <div className="flex flex-wrap items-baseline gap-x-1">
+                                    <span className={`text-sm sm:text-base md:text-xl lg:text-2xl font-black font-mono tracking-tighter whitespace-nowrap ${totalPnL >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>
+                                        {formatInvestNum(totalPnL, false, investMarket === 'US' ? '$' : '¥')}
+                                    </span>
+                                    <span className={`text-[9px] md:text-[10px] font-bold whitespace-nowrap ${totalPnLPct >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>
+                                        {totalPnLPct >= 0 ? '+' : ''}{totalPnLPct.toFixed(2)}%
+                                    </span>
                                 </div>
-                                <div className={`text-[9px] mt-0.5 font-bold ${theme.textSub}`}>浮动 {formatInvestNum(totalUnrealizedPnL, false, '')} | 已结 {formatInvestNum(realizedPnL, false, '')}</div>
+                                <div className={`text-[8px] md:text-[9px] mt-1 font-bold ${theme.textSub} leading-tight flex flex-col xl:flex-row xl:gap-1`}>
+                                    <span className="whitespace-nowrap">浮 {formatInvestNum(totalUnrealizedPnL, false, '')}</span>
+                                    <span className="whitespace-nowrap">结 {formatInvestNum(realizedPnL, false, '')}</span>
+                                </div>
                             </div>
                         </div>
                         <div className="space-y-2 mb-6 relative">
                             {enrichedPortfolio.map(item => {
                                const itemPnLPct = item.cst > 0 ? (item.pnl / item.cst) * 100 : 0;
                                return (
-                               <div key={item.id} className={`flex items-center justify-between p-3 rounded-xl border ${isDarkMode ? 'bg-[#0f212e] border-[#213743]' : 'bg-white border-gray-100'}`}>
-                                  <div className="w-[30%] truncate flex flex-col">
+                               <div key={item.id} className={`flex items-center justify-between p-3 rounded-xl border ${isDarkMode ? 'bg-[#0f212e] border-[#213743]' : 'bg-white border-gray-100'} gap-1`}>
+                                  <div className="flex-1 min-w-0 flex flex-col pr-1">
                                      <a href={getXueqiuUrl(item.code)} target="_blank" rel="noreferrer" className={`text-sm font-bold truncate hover:underline ${theme.textMain}`}>{item.sData.name || '...'}</a>
-                                     <div className={`text-[10px] font-mono mt-0.5 ${theme.textSub}`}>{item.code.toUpperCase()}</div>
+                                     <div className={`text-[10px] font-mono mt-0.5 truncate ${theme.textSub}`}>{item.code.toUpperCase()}</div>
                                   </div>
-                                  <div className="w-[25%] text-right">
-                                     <div className={`text-xs font-mono font-bold ${item.change >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>{item.price > 0 ? (item.market === 'US' ? '$' : '¥') + item.price.toFixed(2) : '--'}</div>
-                                     <div className={`text-[9px] mt-0.5 ${theme.textSub}`}>成本 {item.market === 'US' ? '$' : '¥'}{item.costPrice}</div>
+                                  <div className="w-[22%] text-right shrink-0 flex flex-col justify-start">
+                                     <div className={`text-xs font-mono font-bold truncate ${item.change >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>{item.price > 0 ? (item.market === 'US' ? '$' : '¥') + item.price.toFixed(2) : '--'}</div>
+                                     <div className={`text-[9px] mt-0.5 truncate ${theme.textSub}`}>成本 {item.market === 'US' ? '$' : '¥'}{item.costPrice}</div>
                                   </div>
-                                  <div className="w-[25%] text-right">
-                                     <div className={`text-xs font-mono font-bold ${item.todayItemPnL >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>{formatInvestNum(item.todayItemPnL, false, item.market === 'US' ? '$' : '¥')}</div>
-                                     <div className={`text-[9px] mt-0.5 font-bold ${theme.textSub}`}>市值 {formatInvestNum(item.mv, false, item.market === 'US' ? '$' : '¥')}</div>
-                                     <div className={`text-[9px] mt-0.5 font-bold ${item.pnl >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>浮动 {formatInvestNum(item.pnl, false, '')} ({itemPnLPct >= 0 ? '+' : ''}{itemPnLPct.toFixed(2)}%)</div>
+                                  <div className="w-[28%] text-right shrink-0 flex flex-col justify-start">
+                                     <div className={`text-xs font-mono font-bold truncate ${item.todayItemPnL >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>{formatInvestNum(item.todayItemPnL, false, item.market === 'US' ? '$' : '¥')}</div>
+                                     <div className={`text-[9px] mt-0.5 font-bold truncate ${theme.textSub}`}>市值 {formatInvestNum(item.mv, false, item.market === 'US' ? '$' : '¥')}</div>
+                                     <div className={`text-[9px] mt-0.5 font-bold flex flex-col xl:flex-row xl:justify-end xl:gap-1 ${item.pnl >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>
+                                         <span className="whitespace-nowrap">浮 {formatInvestNum(item.pnl, false, '')}</span>
+                                         <span className="whitespace-nowrap">({itemPnLPct >= 0 ? '+' : ''}{itemPnLPct.toFixed(2)}%)</span>
+                                     </div>
                                   </div>
-                                  <div className="w-[15%] flex flex-col items-end gap-2 pr-1">
+                                  <div className="w-[12%] flex flex-col items-end gap-1.5 pl-1 shrink-0">
                                       <button onClick={() => {
                                           setClosePositionData({ id: item.id, code: item.code, name: item.sData.name, qty: item.quantity, cost: item.costPrice, sellPrice: item.price, sellQty: item.quantity, error: '' });
                                           setShowCloseModal(true);
-                                      }} className={`text-[10px] font-bold px-2 py-1 rounded shadow-sm ${isDarkMode ? 'bg-blue-900/30 text-blue-400' : 'bg-blue-50 text-blue-600'} hover:opacity-80 active:scale-95`}>平仓</button>
-                                      <button onClick={() => handleRemovePosition(item.id)} className="text-gray-400 hover:text-red-500"><Trash2 className="w-3.5 h-3.5"/></button>
+                                      }} className={`text-[10px] font-bold px-2 py-1 rounded shadow-sm w-full text-center ${isDarkMode ? 'bg-blue-900/30 text-blue-400' : 'bg-blue-50 text-blue-600'} hover:opacity-80 active:scale-95`}>平仓</button>
+                                      <button onClick={() => handleRemovePosition(item.id)} className="text-gray-400 hover:text-red-500 w-full flex justify-end pr-1"><Trash2 className="w-3.5 h-3.5"/></button>
                                   </div>
                                </div>
                                );
@@ -1674,7 +1752,7 @@ ${detailStr}
                              </button>
                           ))}
                       </div>
-                      {investTab === 'daily' && (
+                      {(investTab === 'daily' || investTab === 'monthly') && (
                           <div className={`flex p-0.5 rounded-lg text-[10px] font-bold ${isDarkMode ? 'bg-[#0f212e] border border-[#213743]' : 'bg-gray-100 border border-gray-200'}`}>
                               <button onClick={() => setCalendarViewMode('amount')} className={`px-2 py-1 rounded-md transition-all ${calendarViewMode === 'amount' ? (isDarkMode ? 'bg-[#213743] text-white shadow' : 'bg-white text-gray-900 shadow') : theme.textSub}`}>金额</button>
                               <button onClick={() => setCalendarViewMode('percent')} className={`px-2 py-1 rounded-md transition-all ${calendarViewMode === 'percent' ? (isDarkMode ? 'bg-[#213743] text-white shadow' : 'bg-white text-gray-900 shadow') : theme.textSub}`}>比例</button>
@@ -1744,24 +1822,45 @@ ${detailStr}
                             const records = investments[investMarket]?.records || {};
                             let mTotal = 0;
                             Object.keys(records).forEach(k => { if (k.startsWith(prefix)) mTotal += records[k]; });
+                            
+                            let displayVal = '--';
+                            if (mTotal !== 0) {
+                                if (calendarViewMode === 'amount') {
+                                    displayVal = formatInvestNum(mTotal, false, investMarket === 'US' ? '$' : '¥');
+                                } else {
+                                    const pct = totalCost > 0 ? (mTotal / totalCost) * 100 : 0;
+                                    displayVal = (pct > 0 ? '+' : '') + pct.toFixed(2) + '%';
+                                }
+                            }
+
                             return (
                               <div key={m} className={`flex flex-col p-3 rounded-xl border ${isDarkMode ? 'bg-[#0f212e] border-[#213743]' : 'bg-gray-50 border-gray-100'}`}>
                                 <span className={`text-[10px] font-bold mb-1 ${theme.textSub}`}>{m}月</span>
                                 <span className={`text-sm font-black font-mono ${mTotal > 0 ? theme.redUp.split(' ')[0] : (mTotal < 0 ? theme.greenDown.split(' ')[0] : theme.textMain)}`}>
-                                  {mTotal !== 0 ? formatInvestNum(mTotal, false, investMarket === 'US' ? '$' : '¥') : '--'}
+                                  {displayVal}
                                 </span>
                               </div>
                             );
                           })}
                         </div>
-                        <div className={`mt-4 p-4 rounded-2xl flex justify-between items-center shadow-inner ${isDarkMode ? 'bg-[#0f212e]/50 border border-[#213743]' : 'bg-white border border-gray-100'}`}>
-                          <div className="flex items-center gap-2">
-                             <Target className="w-4 h-4 text-red-500" />
-                             <span className={`text-sm font-bold ${theme.textMain}`}>全年累计盈亏 {investMarket === 'US' ? '(美元)' : '(人民币)'}</span>
+                        <div className={`mt-4 p-4 rounded-2xl flex flex-col gap-2 shadow-inner ${isDarkMode ? 'bg-[#0f212e]/50 border border-[#213743]' : 'bg-white border border-gray-100'}`}>
+                          <div className="flex justify-between items-center w-full">
+                              <div className="flex items-center gap-2">
+                                 <Target className="w-4 h-4 text-red-500" />
+                                 <span className={`text-sm font-bold ${theme.textMain}`}>全年累计盈亏 {investMarket === 'US' ? '(美元)' : '(人民币)'}</span>
+                              </div>
+                              <span className={`text-2xl font-black font-mono tracking-tighter ${getInvestmentTotal('yearly') >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>
+                                {calendarViewMode === 'amount' 
+                                    ? formatInvestNum(getInvestmentTotal('yearly'), false, investMarket === 'US' ? '$' : '¥')
+                                    : (totalCost > 0 ? (getInvestmentTotal('yearly') > 0 ? '+' : '') + ((getInvestmentTotal('yearly') / totalCost) * 100).toFixed(2) + '%' : '0.00%')
+                                }
+                              </span>
                           </div>
-                          <span className={`text-2xl font-black font-mono tracking-tighter ${getInvestmentTotal('yearly') >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>
-                            {formatInvestNum(getInvestmentTotal('yearly'), false, investMarket === 'US' ? '$' : '¥')}
-                          </span>
+                          {calendarViewMode === 'percent' && (
+                              <div className={`text-[9px] text-right ${theme.textSub}`}>
+                                  *比例基于当前持仓总成本计算: {formatInvestNum(totalCost, false, investMarket === 'US' ? '$' : '¥')}
+                              </div>
+                          )}
                         </div>
                       </div>
                    )}
@@ -1801,7 +1900,7 @@ ${detailStr}
                             <div className="p-2 bg-indigo-500/10 text-indigo-500 rounded-xl"><Radar className="w-5 h-5"/></div>
                             <h3 className={`text-base font-bold tracking-tight ${theme.textMain}`}>Polymarket 全球预测龙头</h3>
                         </div>
-                        <div className={`text-[10px] font-bold ${theme.textSub}`}>按资金池体量抓取 Top 10</div>
+                        <div className={`text-[10px] font-bold ${theme.textSub}`}>按 24H 实时热度抓取 Top 10</div>
                     </div>
                     
                     <div className="space-y-3">
@@ -1861,14 +1960,13 @@ ${detailStr}
                                 let displayOdds = '--';
                                 let isHighProb = false;
 
-                                if (bestPrice && !isNaN(bestPrice) && bestPrice > 0 && bestPrice <= 1) {
+                                if (bestPrice && !isNaN(bestPrice) && bestPrice > 0 && bestPrice < 1) {
                                     const probNum = bestPrice * 100;
                                     displayProb = probNum.toFixed(1) + '%';
                                     displayOdds = (1 / bestPrice).toFixed(2); 
                                     isHighProb = probNum >= 50;
                                 }
 
-                                // 恢复完美跳转逻辑：优先使用事件聚合页 slug，如果找不到则使用智能搜索兜底，彻底杜绝 404
                                 let polyLink = 'https://polymarket.com/';
                                 if (market.events && market.events.length > 0 && market.events[0].slug) {
                                     polyLink = `https://polymarket.com/event/${market.events[0].slug}`;
@@ -1898,9 +1996,9 @@ ${detailStr}
                                         </div>
                                         <div className="w-[45%] flex justify-end gap-3 md:gap-5 items-center">
                                             <div className="text-right">
-                                                <div className={`text-[10px] ${theme.textSub} mb-1`}>资金池(美元)</div>
+                                                <div className={`text-[10px] ${theme.textSub} mb-1`}>24H交易额</div>
                                                 <div className={`text-xs md:text-sm font-mono font-bold ${theme.textMain}`}>
-                                                    ${formatPolyVol(market.volumeNum || market.volume)}
+                                                    ${formatPolyVol(market.volume24hr || market.volumeNum || market.volume)}
                                                 </div>
                                             </div>
                                             <div className="text-right w-20 md:w-24">
@@ -2099,13 +2197,13 @@ ${detailStr}
           )}
 
           {showClientModal && (
-            <div className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60 backdrop-blur-sm" onClick={(e) => { if(e.target === e.currentTarget) { setShowClientModal(false); setIsClientAuth(false); setActiveClientForFollowUp(null); } }}>
+            <div className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60 backdrop-blur-sm" onClick={(e) => { if(e.target === e.currentTarget) { setShowClientModal(false); setIsClientAuth(false); setActiveClientForFollowUp(null); setIsEditingClient(false); setEditingFollowUpId(null); } }}>
               <div className={`${theme.modalBg} rounded-t-[2rem] sm:rounded-[2rem] w-full max-w-3xl h-[90vh] sm:h-[85vh] shadow-2xl flex flex-col border ${isDarkMode ? 'border-[#213743]' : 'border border-gray-200'}`}>
                 <div className={`p-4 border-b flex justify-between items-center ${isDarkMode ? 'border-[#213743]' : 'border-gray-200'}`}>
                    <h2 className={`text-lg font-bold ${theme.textMain}`}>客户中心</h2>
                    <div className="flex items-center gap-2">
-                     {isClientAuth && <button onClick={handleExportData} className="p-2 bg-gray-100 rounded-lg text-xs font-bold">导出</button>}
-                     <button onClick={() => { setShowClientModal(false); setIsClientAuth(false); }}><X className={`w-5 h-5 ${theme.textSub}`} /></button>
+                     {isClientAuth && <button onClick={handleExportData} className="p-2 bg-gray-100 rounded-lg text-xs font-bold text-black">导出</button>}
+                     <button onClick={() => { setShowClientModal(false); setIsClientAuth(false); setActiveClientForFollowUp(null); setIsEditingClient(false); setEditingFollowUpId(null); }}><X className={`w-5 h-5 ${theme.textSub}`} /></button>
                    </div>
                 </div>
                 <div className="p-4 md:p-6 overflow-y-auto flex-1">
@@ -2119,77 +2217,143 @@ ${detailStr}
                     </div>
                   ) : activeClientForFollowUp ? (
                     <div className="space-y-6">
-                        <button onClick={() => setActiveClientForFollowUp(null)} className="flex items-center gap-2 text-purple-500 font-bold"><ArrowLeft className="w-4 h-4" /> 返回列表</button>
-                        <div className={`p-5 rounded-2xl border ${isDarkMode?'bg-[#0f212e] border-[#213743]':'bg-gray-50'}`}>
-                           <div className={`text-xl font-bold ${theme.textMain}`}>{activeClientForFollowUp.name}</div>
-                           <div className={`text-sm mt-1 flex items-center gap-2 ${theme.textSub}`}>
-                             <a href={`tel:${activeClientForFollowUp.phone}`} className="text-blue-500 font-bold hover:underline flex items-center gap-1" onClick={e => e.stopPropagation()}>
-                               <Phone className="w-3.5 h-3.5" /> {activeClientForFollowUp.phone}
-                             </a>
-                             <span>{activeClientForFollowUp.location}</span>
-                           </div>
-                        </div>
+                        <button onClick={() => { setActiveClientForFollowUp(null); setIsEditingClient(false); setEditingFollowUpId(null); }} className="flex items-center gap-2 text-purple-500 font-bold hover:opacity-80 transition-opacity"><ArrowLeft className="w-4 h-4" /> 返回列表</button>
+                        
+                        {!isEditingClient ? (
+                            <div className={`p-5 rounded-2xl border flex justify-between items-start shadow-sm transition-all ${isDarkMode?'bg-[#0f212e] border-[#213743]':'bg-gray-50 border-gray-200'}`}>
+                               <div>
+                                   <div className="flex items-center gap-3">
+                                       <div className={`text-xl font-bold tracking-tight ${theme.textMain}`}>{activeClientForFollowUp.name}</div>
+                                       {activeClientForFollowUp.location && (
+                                           <span className={`px-2 py-0.5 rounded shadow-sm text-[10px] font-bold bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400`}>{activeClientForFollowUp.location}</span>
+                                       )}
+                                       <span className={`px-2 py-0.5 rounded shadow-sm text-[10px] font-bold text-white ${activeClientForFollowUp.level === 'S' ? 'bg-yellow-500' : 'bg-purple-500'}`}>{activeClientForFollowUp.level}级</span>
+                                   </div>
+                                   <div className={`text-sm mt-2 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 ${theme.textSub}`}>
+                                     <a href={`tel:${activeClientForFollowUp.phone}`} className="text-blue-500 font-bold hover:underline flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
+                                       <Phone className="w-3.5 h-3.5" /> {activeClientForFollowUp.phone || '无电话'}
+                                     </a>
+                                   </div>
+                               </div>
+                               <button onClick={() => { setIsEditingClient(true); setEditClientData(activeClientForFollowUp); }} className={`p-2.5 rounded-xl transition-colors ${isDarkMode?'bg-[#213743] text-gray-300 hover:text-white':'bg-white text-gray-400 hover:text-blue-500 shadow-sm border'}`} title="修改资料">
+                                   <Edit2 className="w-4 h-4" />
+                               </button>
+                            </div>
+                        ) : (
+                            <div className={`p-5 rounded-2xl border shadow-inner space-y-4 animate-in fade-in zoom-in-95 duration-200 ${isDarkMode?'bg-[#1a2c38] border-[#2f4553]':'bg-gray-100 border-gray-300'}`}>
+                                <div className="flex gap-2">
+                                    <div className="flex-1 flex flex-col gap-1">
+                                        <label className={`text-xs font-bold px-1 ${theme.textSub}`}>姓名</label>
+                                        <input type="text" value={editClientData.name} onChange={e=>setEditClientData({...editClientData, name: e.target.value})} className={`w-full px-3 py-2.5 rounded-xl border text-sm ${theme.inputBg} ${theme.textMain}`} placeholder="必填"/>
+                                    </div>
+                                    <div className="w-28 flex flex-col gap-1">
+                                        <label className={`text-xs font-bold px-1 ${theme.textSub}`}>等级</label>
+                                        <select value={editClientData.level} onChange={e=>setEditClientData({...editClientData, level: e.target.value})} className={`w-full px-2 py-2.5 rounded-xl border text-sm ${theme.inputBg} ${theme.textMain}`}>
+                                            <option value="S">S级</option><option value="A">A级</option><option value="B">B级</option><option value="C">C级</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div className="flex flex-col gap-1">
+                                    <label className={`text-xs font-bold px-1 ${theme.textSub}`}>电话 (自动匹配归属地)</label>
+                                    <input type="tel" value={editClientData.phone} onChange={e=>handlePhoneChange(e, true)} className={`w-full px-3 py-2.5 rounded-xl border text-sm ${theme.inputBg} ${theme.textMain}`} placeholder="可选"/>
+                                    {editClientData.location && <div className={`text-[10px] pl-1 font-bold text-blue-500`}>📍 {editClientData.location}</div>}
+                                </div>
+                                <div className="flex gap-3 pt-2">
+                                    <button onClick={() => setIsEditingClient(false)} className={`flex-1 py-3 rounded-xl text-sm font-bold shadow-sm active:scale-95 transition-transform ${isDarkMode ? 'bg-[#2f4553] text-white' : 'bg-gray-200 text-gray-700'}`}>取消</button>
+                                    <button onClick={saveClientEdit} className="flex-[2] py-3 rounded-xl text-sm font-bold bg-blue-600 text-white shadow-md active:scale-95 transition-transform">保存修改</button>
+                                </div>
+                            </div>
+                        )}
+
                         <div className="flex gap-2">
-                          <input type="text" placeholder="输入跟进记录..." value={newFollowUp} onChange={(e) => setNewFollowUp(e.target.value)} className={`flex-1 px-4 py-3 rounded-xl border ${theme.inputBg} ${theme.textMain}`} />
-                          <button onClick={() => handleAddFollowUp(activeClientForFollowUp.id)} className="px-6 py-3 bg-purple-600 text-white font-bold rounded-xl">记录</button>
+                          <input type="text" placeholder="输入新的跟进记录..." value={newFollowUp} onChange={(e) => setNewFollowUp(e.target.value)} className={`flex-1 px-4 py-3 rounded-xl border ${theme.inputBg} ${theme.textMain}`} />
+                          <button onClick={() => handleAddFollowUp(activeClientForFollowUp.id)} className="px-6 py-3 bg-purple-600 text-white font-bold rounded-xl shadow-md active:scale-95 transition-transform">记录</button>
                         </div>
                         <div className="space-y-3">
                            {(activeClientForFollowUp.followUps || []).map((fu, idx) => (
-                             <div key={fu.id || idx} className={`p-4 rounded-xl border ${isDarkMode?'bg-white/5 border-white/10':'bg-white border-gray-200 shadow-sm'}`}>
-                                <div className="flex justify-between text-xs mb-1"><time className="font-mono text-purple-400">{fu.date}</time><button onClick={()=>handleDeleteFollowUp(activeClientForFollowUp.id, fu.id)} className="text-red-400"><Trash2 className="w-3.5 h-3.5"/></button></div>
-                        <div className={`text-sm ${theme.textMain}`}>{fu.text}</div>
-                      </div>
-                    ))}
-                 </div>
-             </div>
-           ) : crmTab === 'add' ? (
-             <div className="space-y-4 max-w-md mx-auto">
-                 <div className="flex flex-col gap-1">
-                          <label className={`text-xs font-bold px-1 ${theme.textSub}`}>录入日期</label>
-                          <input type="date" value={newClient.date} onChange={e => setNewClient({...newClient, date: e.target.value})} className={`w-full px-4 py-3 rounded-xl border ${theme.inputBg} ${theme.textMain}`} />
-                        </div>
-                        <input type="text" placeholder="姓名*" value={newClient.name} onChange={e => setNewClient({...newClient, name: e.target.value})} className={`w-full px-4 py-3 rounded-xl border ${theme.inputBg} ${theme.textMain}`} />
-                        <input type="tel" placeholder="电话" value={newClient.phone} onChange={handlePhoneChange} className={`w-full px-4 py-3 rounded-xl border ${theme.inputBg} ${theme.textMain}`} />
-                        <div className="flex flex-col gap-1">
-                          <label className={`text-xs font-bold px-1 ${theme.textSub}`}>等级划分</label>
-                          <select value={newClient.level} onChange={e => setNewClient({...newClient, level: e.target.value})} className={`w-full px-4 py-3 rounded-xl border ${theme.inputBg} ${theme.textMain}`}>
-                              <option value="S">S级 (核心重点)</option>
-                              <option value="A">A级 (高价值)</option>
-                              <option value="B">B级 (普通客户)</option>
-                              <option value="C">C级 (备用记录)</option>
-                          </select>
-                        </div>
-                        <button onClick={handleAddClient} className="w-full mt-2 py-4 bg-purple-600 text-white font-bold rounded-xl shadow-lg">保存客户资料</button>
-                        <button onClick={()=>setCrmTab('list')} className="w-full py-2 text-sm text-gray-500 font-bold">返回列表</button>
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      <button onClick={()=>setCrmTab('add')} className="w-full py-3 bg-purple-100 text-purple-600 font-bold rounded-xl mb-4">+ 新增录入</button>
-                      {sortedClients.map(client => (
-                        <div key={client.id} onClick={() => setActiveClientForFollowUp(client)} className={`flex items-center justify-between p-4 rounded-2xl border cursor-pointer ${client.level === 'S' ? (isDarkMode ? 'border-yellow-600 bg-yellow-900/10' : 'border-yellow-400 bg-yellow-50') : (isDarkMode ? 'bg-[#0f212e] border-[#213743]' : 'bg-white border-gray-200 shadow-sm')}`}>
-                          <div className="flex items-center gap-4">
-                            <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-white ${client.level === 'S' ? 'bg-yellow-500' : 'bg-purple-500'}`}>
-                               {client.level}
-                            </div>
-                            <div>
-                                <div className={`font-bold ${theme.textMain}`}>{client.name}</div>
-                                <div className={`text-xs mt-0.5 flex items-center gap-1 ${theme.textSub}`}>
-                                    <a href={`tel:${client.phone}`} className="text-blue-500 hover:underline flex items-center gap-0.5" onClick={e => e.stopPropagation()}>
-                                        <Phone className="w-3 h-3" /> {client.phone}
-                                    </a>
-                                    <span>· {client.date}</span>
+                             <div key={fu.id || idx} className={`p-4 rounded-xl border transition-all ${isDarkMode?'bg-white/5 border-white/10':'bg-white border-gray-200 shadow-sm'}`}>
+                                <div className="flex justify-between items-center text-xs mb-2">
+                                    <time className="font-mono text-purple-400 font-bold bg-purple-400/10 px-2 py-0.5 rounded">{fu.date}</time>
+                                    <div className="flex items-center gap-3">
+                                        <button onClick={() => { setEditingFollowUpId(fu.id); setEditFollowUpText(fu.text); }} className={`p-1.5 rounded-lg transition-colors ${isDarkMode?'text-gray-400 hover:bg-white/10 hover:text-white':'text-gray-400 hover:bg-gray-100 hover:text-blue-500'}`} title="编辑记录">
+                                            <Edit2 className="w-3.5 h-3.5"/>
+                                        </button>
+                                        <button onClick={()=>handleDeleteFollowUp(activeClientForFollowUp.id, fu.id)} className={`p-1.5 rounded-lg transition-colors ${isDarkMode?'text-gray-400 hover:bg-red-500/20 hover:text-red-400':'text-gray-400 hover:bg-red-50 hover:text-red-500'}`} title="删除记录">
+                                            <Trash2 className="w-3.5 h-3.5"/>
+                                        </button>
+                                    </div>
                                 </div>
-                            </div>
-                          </div>
-                          <ChevronRight className="w-4 h-4 text-gray-400" />
+                                {editingFollowUpId === fu.id ? (
+                                    <div className="flex flex-col gap-2 mt-2 animate-in fade-in duration-200">
+                                        <textarea value={editFollowUpText} onChange={(e)=>setEditFollowUpText(e.target.value)} className={`w-full p-3 rounded-lg border text-sm resize-none ${theme.inputBg} ${theme.textMain}`} rows="3" />
+                                        <div className="flex justify-end gap-2">
+                                            <button onClick={() => setEditingFollowUpId(null)} className={`px-4 py-1.5 rounded-lg text-xs font-bold ${isDarkMode ? 'bg-[#213743] text-white' : 'bg-gray-200 text-gray-700'}`}>取消</button>
+                                            <button onClick={() => saveFollowUpEdit(fu.id)} className="px-4 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white shadow-sm">保存修改</button>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className={`text-sm whitespace-pre-wrap leading-relaxed ${theme.textMain}`}>{fu.text}</div>
+                                )}
+                             </div>
+                           ))}
                         </div>
-                      ))}
                     </div>
-                  )}
-                </div>
+                  ) : crmTab === 'add' ? (
+              <div className="space-y-4 max-w-md mx-auto">
+                  <div className="flex flex-col gap-1">
+                    <label className={`text-xs font-bold px-1 ${theme.textSub}`}>录入日期</label>
+                    <input type="date" value={newClient.date} onChange={e => setNewClient({...newClient, date: e.target.value})} className={`w-full px-4 py-3 rounded-xl border ${theme.inputBg} ${theme.textMain}`} />
+                  </div>
+                  <input type="text" placeholder="姓名*" value={newClient.name} onChange={e => setNewClient({...newClient, name: e.target.value})} className={`w-full px-4 py-3 rounded-xl border ${theme.inputBg} ${theme.textMain}`} />
+                  
+                  <div className="flex flex-col gap-1">
+                      <input type="tel" placeholder="电话 (自动匹配归属地)" value={newClient.phone} onChange={e => handlePhoneChange(e, false)} className={`w-full px-4 py-3 rounded-xl border ${theme.inputBg} ${theme.textMain}`} />
+                      {phoneLocation && <div className={`text-[10px] pl-2 font-bold text-blue-500 animate-in fade-in`}>📍 {phoneLocation}</div>}
+                  </div>
+
+                  <div className="flex flex-col gap-1">
+                    <label className={`text-xs font-bold px-1 ${theme.textSub}`}>等级划分</label>
+                    <select value={newClient.level} onChange={e => setNewClient({...newClient, level: e.target.value})} className={`w-full px-4 py-3 rounded-xl border ${theme.inputBg} ${theme.textMain}`}>
+                        <option value="S">S级 (核心重点)</option>
+                        <option value="A">A级 (高价值)</option>
+                        <option value="B">B级 (普通客户)</option>
+                        <option value="C">C级 (备用记录)</option>
+                    </select>
+                  </div>
+                  <button onClick={handleAddClient} className="w-full mt-2 py-4 bg-purple-600 text-white font-bold rounded-xl shadow-lg">保存客户资料</button>
+                  <button onClick={()=>setCrmTab('list')} className="w-full py-2 text-sm text-gray-500 font-bold">返回列表</button>
               </div>
-            </div>
-          )}
+            ) : (
+              <div className="space-y-3">
+                <button onClick={()=>setCrmTab('add')} className="w-full py-3 bg-purple-100 text-purple-600 font-bold rounded-xl mb-4">+ 新增录入</button>
+                {sortedClients.map(client => (
+                  <div key={client.id} onClick={() => setActiveClientForFollowUp(client)} className={`flex items-center justify-between p-4 rounded-2xl border cursor-pointer ${client.level === 'S' ? (isDarkMode ? 'border-yellow-600 bg-yellow-900/10' : 'border-yellow-400 bg-yellow-50') : (isDarkMode ? 'bg-[#0f212e] border-[#213743]' : 'bg-white border-gray-200 shadow-sm')}`}>
+                    <div className="flex items-center gap-4">
+                      <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-white ${client.level === 'S' ? 'bg-yellow-500' : 'bg-purple-500'}`}>
+                         {client.level}
+                      </div>
+                      <div>
+                          <div className="flex items-center gap-2">
+                              <div className={`font-bold ${theme.textMain}`}>{client.name}</div>
+                              {client.location && <span className={`text-[10px] px-1.5 py-0.5 rounded-sm bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400`}>{client.location}</span>}
+                          </div>
+                          <div className={`text-xs mt-1 flex flex-wrap items-center gap-2 ${theme.textSub}`}>
+                              <a href={`tel:${client.phone}`} className="text-blue-500 hover:underline flex items-center gap-0.5" onClick={e => e.stopPropagation()}>
+                                  <Phone className="w-3 h-3" /> {client.phone || '无电话'}
+                              </a>
+                              <span className="opacity-60">· {client.date}</span>
+                          </div>
+                      </div>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-gray-400" />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    )}
 
           {showPortfolioModal && (
             <div className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-black/60" onClick={(e) => { if(e.target === e.currentTarget) { setShowPortfolioModal(false); setNewPosition({ code: '', quantity: '', costPrice: '' }); } }}>
