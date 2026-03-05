@@ -123,22 +123,6 @@
       11: { icon: Snowflake, color: "text-sky-300", bg: "bg-sky-300/10", title: "初雪", main: "11月 · 凝霜与蓄锐", sub: "沉下心来，厚积才能薄发" },
       12: { icon: Gift, color: "text-rose-500", bg: "bg-rose-500/10", title: "岁盈", main: "12月 · 圆满与感恩", sub: "岁末将至，敬颂冬绥" }
     };
-    const FIXED_WEEKLY_TASKS = [
-      { text: "周一写清本周3个关键目标", category: "work", critical: true }, { text: "完成2-3个高价值动作", category: "work", critical: true },
-      { text: "周五做一次周复盘", category: "work" }, { text: "运动2次 (每次30-45分钟)", category: "life" },
-      { text: "安排1次高质量家庭时间", category: "life", critical: true }, { text: "阅读1-2次 (累计≥60分钟)", category: "learning" },
-      { text: "投资学习1次 (30-60分钟)", category: "learning" }, { text: "检查仓位是否偏离计划", category: "investment" }
-    ];
-
-    const FULL_YEAR_PLAN = {
-      3: { keyword: "定盘 + 建系统 + 稳节奏", weeks: [
-        { title: "第1周：定盘与建系统", tasks: [{text:"写下年度目标100万", cat:"work", crit:true},{text:"建立月周日模板", cat:"work", crit:true},{text:"梳理客户ABC级", cat:"work"},{text:"建立年度书单", cat:"learning", crit:true}] },
-        { title: "第2周：拉稳节奏", tasks: [{text:"明确本月高价值动作", cat:"work", crit:true},{text:"跟进A类客户", cat:"work"},{text:"联系第1位高手交流", cat:"learning"}] },
-        { title: "第3周：开始产出", tasks: [{text:"推进项目进入下阶段", cat:"work", crit:true},{text:"完成第1位高手交流", cat:"learning", crit:true}] },
-        { title: "第4周：收口复盘", tasks: [{text:"全月大复盘", cat:"work", crit:true},{text:"定稿亲子游方案", cat:"life"}] }
-      ]},
-      ...Array.from({length: 9}, (_, i) => i + 4).reduce((acc, m) => ({...acc, [m]: { keyword: "年度持续执行", weeks: Array(4).fill({ title: `计划执行周`, tasks: [] }) }}), {})
-    };
 
     const App = () => {
       const [isDarkMode, setIsDarkMode] = useState(() => new Date().getHours() >= 19 || new Date().getHours() < 7);
@@ -150,7 +134,6 @@
       const systemMonth = currentTime.getMonth() + 1;
       const systemYear = currentTime.getFullYear();
       const [viewMonth, setViewMonth] = useState(systemMonth);
-      const [activeWeek, setActiveWeek] = useState(0);
       const [usdToCnyRate, setUsdToCnyRate] = useState(7.20);
       
       const [weather, setWeather] = useState({ temp: '--°C', wind: '--km/h', icon: Sun, desc: '获取中' });
@@ -161,7 +144,6 @@
       const [polyTranslations, setPolyTranslations] = useState(() => JSON.parse(localStorage.getItem('polyTranslations') || '{}'));
 
       const [allMonthData, setAllMonthData] = useState(() => JSON.parse(localStorage.getItem('allMonthData') || '{}'));
-      const [tasksCompleted, setTasksCompleted] = useState(() => JSON.parse(localStorage.getItem('tasksCompleted') || '{}'));
       const [investments, setInvestments] = useState(() => JSON.parse(localStorage.getItem('investments') || JSON.stringify({ A: { initialCapital: 1000000, records: {}, realizedPnL: 0 }, US: { initialCapital: 100000, records: {}, realizedPnL: 0 } })));
       const [expenses, setExpenses] = useState(() => JSON.parse(localStorage.getItem('expenses') || '{}'));
       const [portfolio, setPortfolio] = useState(() => JSON.parse(localStorage.getItem('portfolio') || '[]')); 
@@ -249,7 +231,6 @@
       };
 
       const saveData = async (newData) => {
-        if (newData.tasksCompleted !== undefined) { setTasksCompleted(newData.tasksCompleted); localStorage.setItem('tasksCompleted', JSON.stringify(newData.tasksCompleted)); }
         if (newData.allMonthData !== undefined) { setAllMonthData(newData.allMonthData); localStorage.setItem('allMonthData', JSON.stringify(newData.allMonthData)); }
         if (newData.investments !== undefined) { setInvestments(newData.investments); localStorage.setItem('investments', JSON.stringify(newData.investments)); }
         if (newData.expenses !== undefined) { setExpenses(newData.expenses); localStorage.setItem('expenses', JSON.stringify(newData.expenses)); }
@@ -458,7 +439,7 @@
       useEffect(() => {
           const translateNewMarkets = async () => {
               if (polyMarkets.length === 0) return;
-              const currentDisplayMarkets = polyMarkets.slice(polyPage * 10, polyPage * 10 + 10);
+              const currentDisplayMarkets = polyMarkets.slice(polyPage * 5, polyPage * 5 + 5);
               const untranslatedTexts = currentDisplayMarkets.map(m => m.question).filter(q => !polyTranslations[q]);
               if (untranslatedTexts.length === 0) return;
               const savedAiKey = localStorage.getItem('customAiApiKey') || defaultAiApiKey;
@@ -495,7 +476,7 @@
       useEffect(() => {
           const timer = setInterval(() => {
               setPolyPage(prev => {
-                  const maxPages = Math.max(1, Math.ceil(polyMarkets.length / 10));
+                  const maxPages = Math.max(1, Math.ceil(polyMarkets.length / 5));
                   return (prev + 1) % maxPages;
               });
           }, 3600000); // 每隔 1 小时自动切换到下一批最新最热门
@@ -608,7 +589,6 @@
           if (snap.exists()) {
             const d = snap.data();
             if (d.allMonthData) { setAllMonthData(d.allMonthData); localStorage.setItem('allMonthData', JSON.stringify(d.allMonthData)); }
-            if (d.tasksCompleted) { setTasksCompleted(d.tasksCompleted); localStorage.setItem('tasksCompleted', JSON.stringify(d.tasksCompleted)); }
             if (d.portfolio) { setPortfolio(d.portfolio); localStorage.setItem('portfolio', JSON.stringify(d.portfolio)); }
             if (d.investments) { setInvestments(d.investments); localStorage.setItem('investments', JSON.stringify(d.investments)); }
             if (d.expenses) { setExpenses(d.expenses); localStorage.setItem('expenses', JSON.stringify(d.expenses)); }
@@ -628,12 +608,6 @@
       const handleDataAuthSubmit = () => {
         if (dataAuthPwd === '000111') { setEditAuthTime(Date.now()); setShowDataAuthModal(false); setDataAuthPwd(''); if (pendingAction) { pendingAction(); setPendingAction(null); } } 
         else { setDataAuthPwd(''); setAuthErrorShake(true); setTimeout(() => setAuthErrorShake(false), 500); }
-      };
-
-      const handleTaskToggle = (tid) => {
-        const isCompleted = tasksCompleted[tid];
-        const action = () => { saveData({ tasksCompleted: { ...tasksCompleted, [tid]: !isCompleted } }); };
-        if (isCompleted) requireAuth(action)(); else action(); 
       };
 
       const handleHabitToggle = (type, i) => {
@@ -944,18 +918,13 @@ JSON 字段要求：
       };
 
       const currentMonthData = useMemo(() => allMonthData[viewMonth] || { bizStats: { live: [], video: [], leads: [], gmv: 0 }, habits: { reading: Array(31).fill(false), exercise: Array(31).fill(false), review: Array(31).fill(false) } }, [allMonthData, viewMonth]);
-      const currentWeekPlan = useMemo(() => {
-        const monthData = FULL_YEAR_PLAN[viewMonth] || FULL_YEAR_PLAN[3]; const weekData = monthData.weeks && monthData.weeks[activeWeek] ? monthData.weeks[activeWeek] : { title: "计划周", tasks: [] };
-        const combined = [ ...FIXED_WEEKLY_TASKS.map((t, i) => ({ ...t, id: `fixed_M${viewMonth}_W${activeWeek}_${i}` })), ...(weekData.tasks || []).map((t, i) => ({ text: t.text, category: t.cat || 'work', critical: t.crit || false, id: `spec_M${viewMonth}_W${activeWeek}_${i}` })) ];
-        return { ...weekData, tasks: combined, keyword: monthData.keyword };
-      }, [viewMonth, activeWeek]);
-
-      const weekProgress = useMemo(() => {
-        const total = currentWeekPlan.tasks.length; const done = currentWeekPlan.tasks.filter(t => tasksCompleted[t.id]).length;
-        return total === 0 ? 0 : Math.round((done / total) * 100);
-      }, [currentWeekPlan, tasksCompleted]);
 
       const totalGMV = useMemo(() => Object.values(allMonthData).reduce((sum, m) => sum + (m.bizStats && m.bizStats.gmv ? m.bizStats.gmv : 0), 0), [allMonthData]);
+
+      const currentMonthExpenseList = useMemo(() => {
+          const monthKey = `${systemYear}-${String(viewMonth).padStart(2,'0')}`;
+          return Array.isArray(expenses[monthKey]) ? expenses[monthKey] : [];
+      }, [expenses, systemYear, viewMonth]);
 
       const theme = {
         isDark: isDarkMode,
@@ -1147,46 +1116,8 @@ JSON 字段要求：
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
               <div className="lg:col-span-8 space-y-6">
-                <div>
-                   <div className="flex items-center justify-between px-2 pb-3 pt-1">
-                     <h2 className={`text-sm font-bold flex items-center gap-2 ${theme.textMain}`}><Zap className={`w-4 h-4 ${isDarkMode ? 'text-[#34c759]' : 'text-[#0071e3]'} fill-current`} /> 执行周报</h2>
-                     <div className={`rounded-xl p-0.5 flex shadow-sm ${isDarkMode ? 'bg-[#1a2c38] border border-[#213743]' : 'bg-white border border-gray-200'}`}>
-                       {["一", "二", "三", "四"].map((l, i) => (
-                         <button key={i} onClick={() => setActiveWeek(i)} className={`px-4 py-1.5 rounded-lg text-[10px] font-black transition-all ${activeWeek === i ? (isDarkMode ? 'bg-[#34c759] text-[#0f212e]' : 'bg-[#0071e3] text-white shadow-md') : `${theme.textSub} hover:opacity-100`}`}>第{l}周</button>
-                       ))}
-                     </div>
-                   </div>
-                   <div className={`${theme.card} rounded-[2rem] border-none overflow-hidden shadow-2xl`}>
-                     <div className={`px-8 py-5 flex flex-col gap-3 ${isDarkMode ? 'bg-white/[0.03]' : 'bg-slate-50/80'}`}>
-                       <div className="flex justify-between items-center">
-                         <h3 className={`text-lg font-bold tracking-tight ${theme.textMain}`}>{currentWeekPlan.title}</h3>
-                         <div className={`px-4 py-1.5 rounded-xl font-black text-sm border ${isDarkMode ? 'border-[#34c759]/30 text-[#34c759]' : 'border-blue-500/30 text-blue-600'}`}>{weekProgress}%</div>
-                       </div>
-                       <div className={`w-full h-1 rounded-full overflow-hidden ${isDarkMode ? 'bg-black/30' : 'bg-slate-200'}`}>
-                         <div className="h-full transition-all duration-700 ease-out shadow-[0_0_12px_rgba(52,199,89,0.3)]" style={{ width: `${weekProgress}%`, backgroundColor: theme.accent }} />
-                       </div>
-                     </div>
-                     <div className="space-y-0 relative z-10">
-                       {currentWeekPlan.tasks.map((task, idx) => (
-                         <div key={task.id} onClick={() => handleTaskToggle(task.id)} 
-                           className={`flex items-center gap-4 md:gap-6 p-4 sm:p-5 transition-all duration-300 cursor-pointer group active:scale-[0.99] border-none ${tasksCompleted[task.id] ? 'opacity-30 grayscale' : ''} ${idx % 2 === 0 ? theme.rowEven : theme.rowOdd} ${theme.hoverRow}`}>
-                           <div className="shrink-0 transition-transform group-hover:scale-110">
-                             {tasksCompleted[task.id] ? <CheckCircle2 className="w-5 h-5 md:w-6 md:h-6 text-[#34c759]" /> : <Circle className={`w-5 h-5 md:w-6 md:h-6 ${isDarkMode ? 'text-white/10' : 'text-slate-300'}`} />}
-                           </div>
-                           <div className="flex-1">
-                             <div className="flex items-center gap-2 mb-1">
-                               <span className={`text-[7px] font-black px-2 py-0.5 rounded-full text-white uppercase tracking-widest ${task.category === 'work' ? (isDarkMode ? 'bg-[#2f4553]' : 'bg-[#1d1d1f]') : task.category === 'life' ? 'bg-[#ff3b30]' : 'bg-[#5856d6]'}`}>{task.category}</span>
-                               {task.critical && <span className="text-[#ff9500] text-[8px] font-black tracking-widest flex items-center gap-1"><Sparkles className="w-2 h-2" /> CORE</span>}
-                             </div>
-                             <p className={`text-xs md:text-sm font-semibold tracking-tight ${tasksCompleted[task.id] ? 'line-through font-normal text-opacity-50' : theme.textMain}`}>{task.text}</p>
-                           </div>
-                         </div>
-                       ))}
-                     </div>
-                   </div>
-                </div>
                 
-                <div className={`${theme.card} rounded-[2rem] border-none overflow-hidden shadow-2xl p-4 md:p-6 mt-4`}>
+                <div className={`${theme.card} rounded-[2rem] border-none overflow-hidden shadow-2xl p-4 md:p-6`}>
                    <div className={`flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-5 pb-4 border-b ${isDarkMode ? 'border-[#213743]' : 'border-gray-200'}`}>
                       <div className="flex items-center gap-2">
                          <div className="p-2 bg-red-500/10 text-red-500 rounded-xl"><PieChart className="w-5 h-5"/></div>
@@ -1401,7 +1332,7 @@ JSON 字段要求：
                    {investTab === 'analysis' && (
                       <div className="space-y-5 mt-4 animate-in fade-in duration-300">
                            <div className={`p-4 rounded-2xl border flex items-start gap-4 ${isDarkMode ? 'bg-red-900/10 border-red-900/30' : 'bg-red-50 border-red-100'}`}>
-                                <div className="p-3 bg-red-50 text-white rounded-full shrink-0 shadow-md">
+                                <div className="p-3 bg-red-500 text-white rounded-full shrink-0 shadow-md">
                                     <BrainCircuit className="w-5 h-5" />
                                 </div>
                                 <div>
@@ -1434,7 +1365,7 @@ JSON 字段要求：
                         </div>
                         <div className="flex items-center gap-2">
                             <div className={`text-[10px] font-bold ${theme.textSub}`}>全网 Top 40 热榜 · 每小时自动轮换</div>
-                            <button onClick={() => setPolyPage(prev => (prev + 1) % Math.max(1, Math.ceil(polyMarkets.length / 10)))} className={`p-1.5 rounded-md shadow-sm active:scale-95 transition-all flex items-center justify-center ${isDarkMode ? 'bg-[#213743] text-indigo-400 hover:bg-indigo-500/20' : 'bg-white text-indigo-600 border border-gray-200 hover:bg-indigo-50'}`} title="换一批">
+                            <button onClick={() => setPolyPage(prev => (prev + 1) % Math.max(1, Math.ceil(polyMarkets.length / 5)))} className={`p-1.5 rounded-md shadow-sm active:scale-95 transition-all flex items-center justify-center ${isDarkMode ? 'bg-[#213743] text-indigo-400 hover:bg-indigo-500/20' : 'bg-white text-indigo-600 border border-gray-200 hover:bg-indigo-50'}`} title="换一批">
                                 <RefreshCw className={`w-3.5 h-3.5 ${polyLoading ? 'animate-spin' : ''}`} />
                             </button>
                         </div>
@@ -1455,7 +1386,7 @@ JSON 字段要求：
                                 <button onClick={() => window.location.reload()} className={`mt-2 px-6 py-2 rounded-lg text-xs font-bold shadow-md transition-transform active:scale-95 ${isDarkMode ? 'bg-[#213743] text-white hover:bg-white/10' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}>重新连接</button>
                             </div>
                         ) : (
-                            polyMarkets.slice(polyPage * 10, polyPage * 10 + 10).map((market, idx) => {
+                            polyMarkets.slice(polyPage * 5, polyPage * 5 + 5).map((market, idx) => {
                                 let bestPrice = 0; let leadingOutcome = '';
                                 try {
                                     let prices = []; let outcomes = [];
@@ -1640,7 +1571,7 @@ JSON 字段要求：
                     {expenseTab === 'analysis' && (
                         <div className="space-y-5 animate-in fade-in duration-300 pb-10">
                             <div className={`p-4 rounded-2xl border flex items-start gap-4 ${isDarkMode ? 'bg-purple-900/10 border-purple-900/30' : 'bg-purple-50 border-purple-100'}`}>
-                                <div className="p-3 bg-purple-50 text-white rounded-full shrink-0 shadow-md"><BrainCircuit className="w-6 h-6" /></div>
+                                <div className="p-3 bg-purple-500 text-white rounded-full shrink-0 shadow-md"><BrainCircuit className="w-6 h-6" /></div>
                                 <div>
                                     <h3 className={`font-bold text-base ${theme.textMain}`}>AI 专属财务管家</h3>
                                     <p className={`text-xs mt-1 leading-relaxed ${theme.textSub}`}>基于阿里云通义千问大模型，我将深度查阅您当前的收支结构，为您找出不合理的消费漏洞，并定制专属的攒钱与生活建议。</p>
@@ -1733,7 +1664,7 @@ JSON 字段要求：
                 <div className={`w-full h-16 rounded-xl mb-4 px-4 flex items-center justify-end text-3xl font-black font-mono overflow-x-auto ${isDarkMode?'bg-[#0f212e] text-white':'bg-gray-100 text-gray-900'}`}>{calcInput}</div>
                 <div className="grid grid-cols-4 gap-2">
                    {['C','DEL','%','÷','7','8','9','×','4','5','6','-','1','2','3','+','00','0','.','='].map((btn, i) => (
-                      <button key={i} onClick={() => handleCalcBtn(btn)} className={`h-12 rounded-xl text-lg font-bold ${['÷','×','-','+','='].includes(btn) ? 'bg-orange-50 text-white' : (isDarkMode?'bg-[#1a2c38] text-white shadow-md':'bg-white text-gray-900 border')}`}>{btn}</button>
+                      <button key={i} onClick={() => handleCalcBtn(btn)} className={`h-12 rounded-xl text-lg font-bold transition-all active:scale-95 ${['÷','×','-','+','='].includes(btn) ? 'bg-orange-500 text-white shadow-md' : (isDarkMode?'bg-[#1a2c38] text-white shadow-md':'bg-white text-gray-900 border shadow-sm')}`}>{btn}</button>
                    ))}
                 </div>
               </div>
