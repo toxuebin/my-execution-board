@@ -5,7 +5,6 @@
   <meta name="referrer" content="no-referrer">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   
-  <!-- iOS Safari PWA (添加到主屏幕) 核心配置 -->
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="执行看板">
@@ -64,7 +63,6 @@
       Activity, Globe, ExternalLink, List, UserPlus2, PieChart, Eye, EyeOff, Cloud, Key, UploadCloud, Image, BrainCircuit, Radar, MapPin
     } = LucideIcons;
 
-    // --- 核心修改区：直接固化你的专属配置 ---
     const userDefaultConfig = {
       apiKey: "AIzaSyD7zuS6Ntz0KMWR9-By7frlKfzmxTUwX7s",
       authDomain: "rizers-5d385.firebaseapp.com",
@@ -75,7 +73,7 @@
       measurementId: "G-5QWRNPHNPY"
     };
     const defaultSyncKey = "Qianxuebin20120903";
-    const defaultAiApiKey = "sk-2f70415c18c14961a7cf637e4c675502"; // 固化阿里通义千问 API Key
+    const defaultAiApiKey = "sk-2f70415c18c14961a7cf637e4c675502"; 
 
     let storedConfig = null;
     try { 
@@ -155,21 +153,16 @@
       const [activeWeek, setActiveWeek] = useState(0);
       const [usdToCnyRate, setUsdToCnyRate] = useState(7.20);
       
-      // 真实天气状态
       const [weather, setWeather] = useState({ temp: '--°C', wind: '--km/h', icon: Sun, desc: '获取中' });
-
-      // Polymarket 追踪状态
       const [polyMarkets, setPolyMarkets] = useState([]);
+      const [polyPage, setPolyPage] = useState(0);
       const [polyLoading, setPolyLoading] = useState(true);
       const [polyError, setPolyError] = useState('');
-      
-      // AI 翻译缓存状态 (优先从本地读取)
       const [polyTranslations, setPolyTranslations] = useState(() => JSON.parse(localStorage.getItem('polyTranslations') || '{}'));
 
       const [allMonthData, setAllMonthData] = useState(() => JSON.parse(localStorage.getItem('allMonthData') || '{}'));
       const [tasksCompleted, setTasksCompleted] = useState(() => JSON.parse(localStorage.getItem('tasksCompleted') || '{}'));
-      const [clients, setClients] = useState(() => JSON.parse(localStorage.getItem('clients') || '[]'));
-      const [investments, setInvestments] = useState(() => JSON.parse(localStorage.getItem('investments') || JSON.stringify({ A: { initialCapital: 1000000, records: {} }, US: { initialCapital: 100000, records: {} } })));
+      const [investments, setInvestments] = useState(() => JSON.parse(localStorage.getItem('investments') || JSON.stringify({ A: { initialCapital: 1000000, records: {}, realizedPnL: 0 }, US: { initialCapital: 100000, records: {}, realizedPnL: 0 } })));
       const [expenses, setExpenses] = useState(() => JSON.parse(localStorage.getItem('expenses') || '{}'));
       const [portfolio, setPortfolio] = useState(() => JSON.parse(localStorage.getItem('portfolio') || '[]')); 
       
@@ -184,8 +177,6 @@
         const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
       };
 
-      const [showClientModal, setShowClientModal] = useState(false);
-      const [crmTab, setCrmTab] = useState('list'); 
       const [showCalc, setShowCalc] = useState(false);
       const [calcInput, setCalcInput] = useState('0');
       const [stockData, setStockData] = useState([]);
@@ -214,21 +205,7 @@
 
       const [investTab, setInvestTab] = useState('daily'); 
       const [investMarket, setInvestMarket] = useState('A');
-      const [calendarViewMode, setCalendarViewMode] = useState('amount'); // 日历视图模式 amount / percent
-      const [isClientAuth, setIsClientAuth] = useState(false);
-      const [clientPwdInput, setClientPwdInput] = useState('');
-      const [newClient, setNewClient] = useState({ date: getTodayDateString(), name: '', phone: '', level: 'B', remindDays: '0' });
-      const [phoneLocation, setPhoneLocation] = useState('');
-      const [pwdErrorShake, setPwdErrorShake] = useState(false);
-      const [activeClientForFollowUp, setActiveClientForFollowUp] = useState(null);
-      const [newFollowUp, setNewFollowUp] = useState('');
-      const queryTimeoutRef = useRef(null);
-
-      // 编辑客户与跟进记录的状态控制
-      const [isEditingClient, setIsEditingClient] = useState(false);
-      const [editClientData, setEditClientData] = useState({});
-      const [editingFollowUpId, setEditingFollowUpId] = useState(null);
-      const [editFollowUpText, setEditFollowUpText] = useState('');
+      const [calendarViewMode, setCalendarViewMode] = useState('amount'); 
 
       const [showSettingsModal, setShowSettingsModal] = useState(false);
       const [customConfigInput, setCustomConfigInput] = useState(() => {
@@ -274,7 +251,6 @@
       const saveData = async (newData) => {
         if (newData.tasksCompleted !== undefined) { setTasksCompleted(newData.tasksCompleted); localStorage.setItem('tasksCompleted', JSON.stringify(newData.tasksCompleted)); }
         if (newData.allMonthData !== undefined) { setAllMonthData(newData.allMonthData); localStorage.setItem('allMonthData', JSON.stringify(newData.allMonthData)); }
-        if (newData.clients !== undefined) { setClients(newData.clients); localStorage.setItem('clients', JSON.stringify(newData.clients)); }
         if (newData.investments !== undefined) { setInvestments(newData.investments); localStorage.setItem('investments', JSON.stringify(newData.investments)); }
         if (newData.expenses !== undefined) { setExpenses(newData.expenses); localStorage.setItem('expenses', JSON.stringify(newData.expenses)); }
         if (newData.portfolio !== undefined) { setPortfolio(newData.portfolio); localStorage.setItem('portfolio', JSON.stringify(newData.portfolio)); }
@@ -303,14 +279,11 @@
           .catch(() => console.log('使用默认汇率 7.2'));
       }, []);
 
-      // === 股票数据获取逻辑：彻底修复版 (双核架构) ===
       useEffect(() => {
-         const FINNHUB_API_KEY = 'd6k0h3pr01qkvh5rmhcgd6k0h3pr01qkvh5rmhd0'; // 你的专属API
+         const FINNHUB_API_KEY = 'd6k0h3pr01qkvh5rmhcgd6k0h3pr01qkvh5rmhd0'; 
          
          const fetchStocks = () => {
              const baseCodes = [...new Set([...portfolio.map(p => p.code), 'sh000001', 'usDJI'])];
-             
-             // 构造给腾讯接口用的代码数组 (包含A股和美股)
              const fetchCodes = baseCodes.map(code => {
                  let lower = code.toLowerCase();
                  if (lower.startsWith('hk')) return 'hk' + lower.slice(2).toUpperCase();
@@ -323,8 +296,6 @@
              
              script.onload = async () => {
                  const newStockData = [];
-                 
-                 // 1. 先用腾讯接口获取所有股票的基础数据（兜底所有中文名和常规时段价格）
                  baseCodes.forEach(originalCode => {
                      let fCode = originalCode.toLowerCase();
                      if (fCode.startsWith('hk')) fCode = 'hk' + fCode.slice(2).toUpperCase();
@@ -352,71 +323,43 @@
                              }
 
                              newStockData.push({ 
-                                 code: originalCode, 
-                                 name: name, 
-                                 price: currentPrice || 0, 
-                                 change: change.toFixed(3), 
-                                 changePct: changePct.toFixed(2),
-                                 isUS: originalCode.toLowerCase().startsWith('us')
+                                 code: originalCode, name: name, price: currentPrice || 0, change: change.toFixed(3), changePct: changePct.toFixed(2), isUS: originalCode.toLowerCase().startsWith('us')
                              });
                          }
                      }
                  });
-                 
-                 // 立刻用腾讯兜底数据更新页面，确保绝无 0.00 空白
                  setStockData(newStockData);
 
-                 // 2. 针对美股，异步调用 Finnhub 覆盖盘前/盘后实时价格
                  const usCodes = baseCodes.filter(c => c.toLowerCase().startsWith('us'));
                  if (usCodes.length > 0) {
                      const finnhubOverrides = [];
-                     
                      for (let i = 0; i < usCodes.length; i++) {
                          const originalCode = usCodes[i];
-                         const symbol = originalCode.slice(2).toUpperCase(); // e.g., usSOXL -> SOXL
-                         
+                         const symbol = originalCode.slice(2).toUpperCase();
                          try {
                              const response = await fetch(`https://finnhub.io/api/v1/quote?symbol=${symbol}&token=${FINNHUB_API_KEY}`);
                              if (response.ok) {
                                  const data = await response.json();
                                  if (data && typeof data.c === 'number' && data.c > 0) {
                                      finnhubOverrides.push({
-                                         code: originalCode,
-                                         price: data.c,
-                                         change: data.d ? data.d.toFixed(3) : "0.000",
-                                         changePct: data.dp ? data.dp.toFixed(2) : "0.00"
+                                         code: originalCode, price: data.c, change: data.d ? data.d.toFixed(3) : "0.000", changePct: data.dp ? data.dp.toFixed(2) : "0.00"
                                      });
                                  }
                              }
-                         } catch (err) {
-                             console.warn(`Finnhub Failed for ${symbol}`, err);
-                         }
-                         
-                         if (i < usCodes.length - 1) {
-                             await new Promise(r => setTimeout(r, 200)); // 防超限
-                         }
+                         } catch (err) {}
+                         if (i < usCodes.length - 1) await new Promise(r => setTimeout(r, 200)); 
                      }
-                     
-                     // 把覆盖的美股数据注入到状态中
                      if (finnhubOverrides.length > 0) {
                          setStockData(prev => prev.map(p => {
                              const override = finnhubOverrides.find(o => o.code === p.code);
-                             if (override) {
-                                 return { ...p, price: override.price, change: override.change, changePct: override.changePct };
-                             }
+                             if (override) return { ...p, price: override.price, change: override.change, changePct: override.changePct };
                              return p;
                          }));
                      }
                  }
-                 
-                 // 清理 script
                  if (document.head.contains(script)) document.head.removeChild(script);
              };
-             
-             script.onerror = () => {
-                 if (document.head.contains(script)) document.head.removeChild(script);
-             };
-             
+             script.onerror = () => { if (document.head.contains(script)) document.head.removeChild(script); };
              document.head.appendChild(script);
          };
 
@@ -446,7 +389,6 @@
           return todayTotal;
       }, [portfolio, stockData, investMarket]);
 
-      // === 自动同步盈亏数据到云端 ===
       useEffect(() => {
           if (autoSyncPnLValue === 0 || !user) return;
           const today = getTodayDateString();
@@ -456,79 +398,43 @@
               if (Math.abs((currentRecords[today] || 0) - autoSyncPnLValue) > 0.05) {
                   const updatedInvestments = { 
                       ...investments, 
-                      [investMarket]: { 
-                          ...investments[investMarket], 
-                          records: { ...currentRecords, [today]: autoSyncPnLValue } 
-                      } 
+                      [investMarket]: { ...investments[investMarket], records: { ...currentRecords, [today]: autoSyncPnLValue } } 
                   };
                   saveData({ investments: updatedInvestments });
               }
           }
       }, [autoSyncPnLValue, user, investMarket]);
 
-      // === Polymarket 全球预测抓取 (回归原版最稳定的跳转逻辑) ===
       useEffect(() => {
           const fetchPolymarket = async () => {
-              setPolyLoading(true);
-              setPolyError('');
-              
+              setPolyLoading(true); setPolyError('');
               try {
-                  // 抓取实时最热榜单
-                  const targetUrl = 'https://gamma-api.polymarket.com/markets?limit=30&active=true&closed=false&order=volume24hr&ascending=false';
-                  
+                  const targetUrl = 'https://gamma-api.polymarket.com/markets?limit=50&active=true&closed=false&order=volume24hr&ascending=false';
                   const proxies = [
                       { name: 'Direct', url: targetUrl }, 
                       { name: 'AllOrigins(Wrapper)', url: `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}` }, 
-                      { name: 'CorsProxyIO', url: `https://corsproxy.io/?${encodeURIComponent(targetUrl)}` },
-                      { name: 'CodeTabs', url: `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}` },
-                      { name: 'Afeld', url: `https://jsonp.afeld.me/?url=${encodeURIComponent(targetUrl)}` }
+                      { name: 'CorsProxyIO', url: `https://corsproxy.io/?${encodeURIComponent(targetUrl)}` }
                   ];
 
                   const fetchFirstValid = (proxyList) => {
                       return new Promise((resolve, reject) => {
-                          let failedCount = 0;
-                          let isResolved = false;
-
+                          let failedCount = 0; let isResolved = false;
                           proxyList.forEach(proxy => {
                               const fetchPromise = new Promise(async (res, rej) => {
                                   try {
                                       const controller = new AbortController();
                                       const id = setTimeout(() => controller.abort(), 6000); 
-                                      
-                                      const response = await fetch(proxy.url, { 
-                                          headers: { 'Accept': 'application/json' },
-                                          signal: controller.signal
-                                      });
+                                      const response = await fetch(proxy.url, { headers: { 'Accept': 'application/json' }, signal: controller.signal });
                                       clearTimeout(id);
-                                      
                                       if (!response.ok) throw new Error('HTTP ' + response.status);
                                       const data = await response.json();
-                                      
-                                      let finalData = data;
-                                      if (proxy.name === 'AllOrigins(Wrapper)' && data.contents) {
-                                          finalData = JSON.parse(data.contents);
-                                      }
-
-                                      if (Array.isArray(finalData) || finalData.data || finalData.markets) {
-                                          res({ name: proxy.name, data: finalData });
-                                      } else {
-                                          throw new Error('Data format invalid');
-                                      }
-                                  } catch (err) {
-                                      rej(err);
-                                  }
+                                      let finalData = proxy.name === 'AllOrigins(Wrapper)' && data.contents ? JSON.parse(data.contents) : data;
+                                      if (Array.isArray(finalData) || finalData.data || finalData.markets) res({ name: proxy.name, data: finalData });
+                                      else throw new Error('Data format invalid');
+                                  } catch (err) { rej(err); }
                               });
-
-                              fetchPromise.then(result => {
-                                  if (!isResolved) {
-                                      isResolved = true;
-                                      resolve(result);
-                                  }
-                              }).catch(err => {
-                                  failedCount++;
-                                  if (failedCount === proxyList.length && !isResolved) {
-                                      reject(new Error('所有可用通道均已拦截或超时。'));
-                                  }
+                              fetchPromise.then(result => { if (!isResolved) { isResolved = true; resolve(result); } }).catch(err => {
+                                  failedCount++; if (failedCount === proxyList.length && !isResolved) reject(new Error('所有可用通道均已拦截或超时。'));
                               });
                           });
                       });
@@ -536,85 +442,65 @@
 
                   const winner = await fetchFirstValid(proxies);
                   const parsedData = winner.data;
-
                   let marketsArray = Array.isArray(parsedData) ? parsedData : (parsedData.data || parsedData.markets || []);
                   
                   if (marketsArray && marketsArray.length > 0) {
-                      const validMarkets = marketsArray.filter(m => m.question && (m.outcomePrices || (m.tokens && m.tokens.length > 0))).slice(0, 10);
-                      if (validMarkets.length > 0) {
-                          setPolyMarkets(validMarkets);
-                      } else {
-                          throw new Error('未找到有效的预测市场数据');
-                      }
-                  } else {
-                      throw new Error('解析到的数据为空');
-                  }
-              } catch (e) {
-                  setPolyError(e.message);
-              } finally {
-                  setPolyLoading(false);
-              }
+                      const validMarkets = marketsArray.filter(m => m.question && (m.outcomePrices || (m.tokens && m.tokens.length > 0))).slice(0, 40);
+                      if (validMarkets.length > 0) setPolyMarkets(validMarkets); else throw new Error('未找到有效的预测市场数据');
+                  } else { throw new Error('解析到的数据为空'); }
+              } catch (e) { setPolyError(e.message); } finally { setPolyLoading(false); }
           };
           fetchPolymarket();
           const timer = setInterval(fetchPolymarket, 300000);
           return () => clearInterval(timer);
       }, []);
 
-      // === AI 智能异步翻译 + 永久缓存引擎 ===
       useEffect(() => {
           const translateNewMarkets = async () => {
               if (polyMarkets.length === 0) return;
-
-              const untranslatedTexts = polyMarkets
-                  .map(m => m.question)
-                  .filter(q => !polyTranslations[q]);
-
+              const currentDisplayMarkets = polyMarkets.slice(polyPage * 10, polyPage * 10 + 10);
+              const untranslatedTexts = currentDisplayMarkets.map(m => m.question).filter(q => !polyTranslations[q]);
               if (untranslatedTexts.length === 0) return;
-
               const savedAiKey = localStorage.getItem('customAiApiKey') || defaultAiApiKey;
               if (!savedAiKey) return;
 
               try {
                   const url = 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
                   const prompt = `你是一个专业的金融与政治预测市场翻译专家。请将以下英文预测标题翻译成准确、简洁、地道的中文。
-要求：
-1. 保持人名、机构名（如Trump, Fed, 球队名等）的准确翻译，符合国内看盘习惯。
-2. 必须且只能返回纯 JSON 对象格式（不要任何 Markdown 标记，不要输出 \`\`\`json 等修饰符），JSON的键为原始英文字符串，值为中文翻译。
-
+必须且只能返回纯 JSON 对象格式（不要任何 Markdown 标记），JSON的键为原始英文字符串，值为中文翻译。
 待翻译列表：\n${JSON.stringify(untranslatedTexts)}`;
 
-                  const payload = {
-                      model: "qwen-plus",
-                      messages: [{ role: "user", content: prompt }]
-                  };
-
-                  const response = await fetch(url, {
-                      method: 'POST',
-                      headers: { 'Authorization': `Bearer ${savedAiKey}`, 'Content-Type': 'application/json' },
-                      body: JSON.stringify(payload)
-                  });
+                  const payload = { model: "qwen-plus", messages: [{ role: "user", content: prompt }] };
+                  const response = await fetch(url, { method: 'POST', headers: { 'Authorization': `Bearer ${savedAiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
 
                   if (response.ok) {
                       const result = await response.json();
                       if (result && result.choices && result.choices.length > 0) {
                           let textResponse = result.choices[0].message.content;
                           let cleanJson = textResponse.replace(/```json/gi, '').replace(/```/g, '').trim();
-                          
                           try {
                               const newTranslations = JSON.parse(cleanJson);
                               if (Object.keys(newTranslations).length > 0) {
                                   const updatedCache = { ...polyTranslations, ...newTranslations };
-                                  setPolyTranslations(updatedCache);
-                                  localStorage.setItem('polyTranslations', JSON.stringify(updatedCache));
+                                  setPolyTranslations(updatedCache); localStorage.setItem('polyTranslations', JSON.stringify(updatedCache));
                               }
                           } catch (parseError) {}
                       }
                   }
               } catch (error) {}
           };
-
           translateNewMarkets();
-      }, [polyMarkets]);
+      }, [polyMarkets, polyPage]);
+
+      useEffect(() => {
+          const timer = setInterval(() => {
+              setPolyPage(prev => {
+                  const maxPages = Math.max(1, Math.ceil(polyMarkets.length / 10));
+                  return (prev + 1) % maxPages;
+              });
+          }, 3600000); // 每隔 1 小时自动切换到下一批最新最热门
+          return () => clearInterval(timer);
+      }, [polyMarkets.length]);
 
       useEffect(() => {
          const fetchNews = () => {
@@ -654,77 +540,6 @@
          return `https://xueqiu.com/S/${code.toUpperCase()}`;
       };
 
-      // 手机归属地极速查询 (采用 "外部API + LocalStorage 前端级Redis缓存" 策略)
-      const queryPhoneLocationReal = async (phone, isEdit = false) => {
-        if(phone.length !== 11) return;
-        
-        // 1. 尝试从本地“Redis缓存”读取
-        const cacheKey = `phone_loc_${phone}`;
-        const cachedLoc = localStorage.getItem(cacheKey);
-        
-        if (cachedLoc) {
-            if (isEdit) setEditClientData(prev => ({...prev, location: cachedLoc}));
-            else setPhoneLocation(cachedLoc);
-            return; // 命中缓存，直接结束，不消耗API
-        }
-
-        // 2. 如果缓存没有，再调用网络 API 获取
-        try {
-           const res = await fetch(`https://api.vvhan.com/api/phone?tel=${phone}`);
-           const data = await res.json();
-           if (data.success && data.info) {
-               const loc = `${data.info.prov} ${data.info.city}`.trim();
-               if (isEdit) setEditClientData(prev => ({...prev, location: loc}));
-               else setPhoneLocation(loc);
-               // 获取成功后，立刻写入本地缓存池
-               localStorage.setItem(cacheKey, loc);
-           }
-        } catch(e) { console.warn("Location query failed"); }
-      };
-
-      const handlePhoneChange = (e, isEdit = false) => {
-        const val = e.target.value.replace(/\D/g, '').substring(0, 11);
-        
-        if (isEdit) {
-            setEditClientData({...editClientData, phone: val});
-        } else {
-            setNewClient({...newClient, phone: val});
-        }
-
-        if (queryTimeoutRef.current) clearTimeout(queryTimeoutRef.current);
-        if(val.length === 11) queryTimeoutRef.current = setTimeout(() => queryPhoneLocationReal(val, isEdit), 600);
-      };
-
-      // 新增：保存客户基础信息修改
-      const saveClientEdit = () => {
-        if (!editClientData.name) return alert("姓名不能为空");
-        const action = () => {
-            const updatedClients = clients.map(c => c.id === activeClientForFollowUp.id ? { ...c, ...editClientData } : c);
-            saveData({ clients: updatedClients });
-            setActiveClientForFollowUp({ ...activeClientForFollowUp, ...editClientData });
-            setIsEditingClient(false);
-        };
-        requireAuth(action)();
-      };
-
-      // 新增：保存跟进记录修改
-      const saveFollowUpEdit = (fuId) => {
-        if (!editFollowUpText.trim()) return;
-        const action = () => {
-            const updatedClients = clients.map(c => {
-                if (c.id === activeClientForFollowUp.id) {
-                    return { ...c, followUps: (c.followUps || []).map(fu => fu.id === fuId ? { ...fu, text: editFollowUpText } : fu) };
-                }
-                return c;
-            });
-            saveData({ clients: updatedClients });
-            setActiveClientForFollowUp(updatedClients.find(c => c.id === activeClientForFollowUp.id));
-            setEditingFollowUpId(null);
-            setEditFollowUpText('');
-        };
-        requireAuth(action)();
-      };
-
       useEffect(() => { setCurrentMotto(MOTTO_LIST[Math.floor(Math.random() * MOTTO_LIST.length)]); const t = setInterval(() => setCurrentTime(new Date()), 1000); return () => clearInterval(t); }, []);
 
       useEffect(() => {
@@ -735,10 +550,7 @@
                if (data && data.current_weather) {
                   const current = data.current_weather;
                   const code = current.weathercode;
-                  
-                  let wIcon = Sun;
-                  let wDesc = '晴';
-                  
+                  let wIcon = Sun; let wDesc = '晴';
                   if (code === 0) { wIcon = Sun; wDesc = '晴'; }
                   else if (code === 1 || code === 2) { wIcon = Cloud; wDesc = '多云'; }
                   else if (code === 3) { wIcon = Cloud; wDesc = '阴'; }
@@ -746,7 +558,6 @@
                   else if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82)) { wIcon = CloudRain; wDesc = '雨'; }
                   else if ((code >= 71 && code <= 77) || (code >= 85 && code <= 86)) { wIcon = Snowflake; wDesc = '雪'; }
                   else if (code >= 95 && code <= 99) { wIcon = Zap; wDesc = '雷阵雨'; }
-                  
                   setWeather({ temp: `${current.temperature}°C`, wind: `${current.windspeed}km/h`, icon: wIcon, desc: wDesc });
                }
             } catch (e) {}
@@ -758,26 +569,14 @@
 
       useEffect(() => {
         let unsubscribeAuth = () => {};
-        
         const initAuth = async () => {
           try {
-            if (!auth) {
-               setLoading(false);
-               return;
-            }
-            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                await signInWithCustomToken(auth, __initial_auth_token);
-            } else {
-                await signInAnonymously(auth); 
-            }
-            
-            unsubscribeAuth = onAuthStateChanged(auth, u => { 
-                setUser(u); 
-                if (!u) setLoading(false); 
-            });
+            if (!auth) { setLoading(false); return; }
+            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) { await signInWithCustomToken(auth, __initial_auth_token); } 
+            else { await signInAnonymously(auth); }
+            unsubscribeAuth = onAuthStateChanged(auth, u => { setUser(u); if (!u) setLoading(false); });
           } catch (err) { setLoading(false); }
         };
-        
         initAuth();
         const fallbackTimer = setTimeout(() => { setLoading(false); }, 4000); 
         return () => { unsubscribeAuth(); clearTimeout(fallbackTimer); };
@@ -787,19 +586,15 @@
         if (!user) return;
         const initDocId = async () => {
           try {
-              if (isCanvasEnv) {
-                 setSyncDocId(user.uid);
-              } else {
+              if (isCanvasEnv) { setSyncDocId(user.uid); } 
+              else {
                  const key = localStorage.getItem('customSyncKey') || defaultSyncKey;
                  if (window.crypto && window.crypto.subtle) {
                      const msgBuffer = new TextEncoder().encode(key);                    
                      const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
-                     const hashArray = Array.from(new Uint8Array(hashBuffer));
-                     const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+                     const hashHex = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
                      setSyncDocId(hashHex);
-                 } else {
-                     setSyncDocId('doc_' + btoa(encodeURIComponent(key)).replace(/[^a-zA-Z0-9]/g, '').substring(0, 30));
-                 }
+                 } else { setSyncDocId('doc_' + btoa(encodeURIComponent(key)).replace(/[^a-zA-Z0-9]/g, '').substring(0, 30)); }
               }
           } catch (err) { setSyncDocId('fallback_dashboard_id'); }
         };
@@ -808,16 +603,12 @@
 
       useEffect(() => {
         if (!user || !db || !syncDocId) return;
-        const docRef = isCanvasEnv 
-            ? doc(db, 'artifacts', appId, 'users', syncDocId, 'dashboard', 'data_pro_v5')
-            : doc(db, 'users', 'standalone', 'dashboards', syncDocId);
-            
+        const docRef = isCanvasEnv ? doc(db, 'artifacts', appId, 'users', syncDocId, 'dashboard', 'data_pro_v5') : doc(db, 'users', 'standalone', 'dashboards', syncDocId);
         const unsubscribeSnap = onSnapshot(docRef, (snap) => {
           if (snap.exists()) {
             const d = snap.data();
             if (d.allMonthData) { setAllMonthData(d.allMonthData); localStorage.setItem('allMonthData', JSON.stringify(d.allMonthData)); }
             if (d.tasksCompleted) { setTasksCompleted(d.tasksCompleted); localStorage.setItem('tasksCompleted', JSON.stringify(d.tasksCompleted)); }
-            if (d.clients) { setClients(d.clients); localStorage.setItem('clients', JSON.stringify(d.clients)); }
             if (d.portfolio) { setPortfolio(d.portfolio); localStorage.setItem('portfolio', JSON.stringify(d.portfolio)); }
             if (d.investments) { setInvestments(d.investments); localStorage.setItem('investments', JSON.stringify(d.investments)); }
             if (d.expenses) { setExpenses(d.expenses); localStorage.setItem('expenses', JSON.stringify(d.expenses)); }
@@ -849,8 +640,7 @@
         const cmData = allMonthData[viewMonth] || { bizStats: { live: [], video: [], leads: [], gmv: 0 }, habits: { reading: Array(31).fill(false), exercise: Array(31).fill(false), review: Array(31).fill(false) } };
         const isCompleted = cmData.habits[type][i];
         const action = () => {
-          const nextHabits = { ...cmData.habits };
-          nextHabits[type][i] = !isCompleted;
+          const nextHabits = { ...cmData.habits }; nextHabits[type][i] = !isCompleted;
           saveData({ allMonthData: { ...allMonthData, [viewMonth]: { ...cmData, habits: nextHabits } } });
         };
         if (isCompleted) requireAuth(action)(); else action();
@@ -900,28 +690,17 @@
       };
 
       const handleBulkExpenseImport = (items) => {
-          let nextExpenses = { ...expenses };
-          let count = 0;
+          let nextExpenses = { ...expenses }; let count = 0;
           items.forEach(item => {
               if(!item.date || !item.amount) return;
               const [year, month, day] = item.date.split('-');
               if (!year || !month) return;
-
               const monthKey = `${year}-${month.padStart(2, '0')}`;
-              const newRecord = {
-                  id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
-                  date: item.date,
-                  amount: Number(item.amount),
-                  desc: item.desc || '账单导入',
-                  type: item.type === 'in' ? 'in' : 'out',
-                  time: item.time || '12:00'
-              };
-              
+              const newRecord = { id: Date.now().toString() + Math.random().toString(36).substr(2, 5), date: item.date, amount: Number(item.amount), desc: item.desc || '账单导入', type: item.type === 'in' ? 'in' : 'out', time: item.time || '12:00' };
               if (!Array.isArray(nextExpenses[monthKey])) nextExpenses[monthKey] = [];
               nextExpenses[monthKey] = [newRecord, ...nextExpenses[monthKey]];
               count++;
           });
-          
           if (count > 0) saveData({ expenses: nextExpenses });
           return count;
       };
@@ -929,26 +708,15 @@
       const handleImageUpload = async (e) => {
           const file = e.target.files[0];
           if (!file) return;
-
           const savedAiKey = localStorage.getItem('customAiApiKey') || defaultAiApiKey;
-          if (!savedAiKey) {
-              alert("缺少 API Key");
-              return;
-          }
-
-          setIsRecognizing(true);
-          setRecognizeStatus('正在读取图片...');
-
-          const reader = new FileReader();
-          reader.readAsDataURL(file);
+          if (!savedAiKey) { alert("缺少 API Key"); return; }
+          setIsRecognizing(true); setRecognizeStatus('正在读取图片...');
+          const reader = new FileReader(); reader.readAsDataURL(file);
           
           reader.onload = async () => {
               try {
-                  const base64Data = reader.result.split(',')[1];
-                  const mimeType = file.type;
-
+                  const base64Data = reader.result.split(',')[1]; const mimeType = file.type;
                   setRecognizeStatus('通义千问正在深度解析账单明细...');
-
                   const url = 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
                   const prompt = `你是一个专业的财务账单识别助手。请从这张账单截图中提取所有的交易记录。
 如果是微信或支付宝的账单，请注意正负号（负号或没有符号通常是支出 out，正号是收入 in）。
@@ -959,50 +727,19 @@ JSON 字段要求：
 - type: "in" (收入) 或 "out" (支出)
 - date: 日期，严格按照格式 YYYY-MM-DD (字符串)
 - time: 时间，格式 HH:mm (字符串)
+注意：请直接输出纯 JSON 数组，不要包含任何 Markdown 格式符号。`;
 
-注意：请直接输出纯 JSON 数组，不要包含任何 Markdown 格式符号（如 \`\`\`json ）或额外说明文字。
-示例输出格式：
-[
-  {"desc": "成都好居有幸", "amount": 124.00, "type": "out", "date": "2026-03-03", "time": "14:11"},
-  {"desc": "转账-退款", "amount": 8000.00, "type": "in", "date": "2026-03-02", "time": "01:59"}
-]`;
+                  const payload = { model: "qwen-vl-max", messages: [{ role: "user", content: [ { type: "text", text: prompt }, { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64Data}` } } ] }] };
 
-                  const payload = {
-                      model: "qwen-vl-max",
-                      messages: [{
-                          role: "user",
-                          content: [
-                              { type: "text", text: prompt },
-                              { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64Data}` } }
-                          ]
-                      }]
-                  };
-
-                  let retries = 2;
-                  let delay = 1000;
-                  let result = null;
-
+                  let retries = 2; let delay = 1000; let result = null;
                   while (retries > 0) {
                       try {
-                          const response = await fetch(url, { 
-                              method: 'POST', 
-                              headers: { 
-                                  'Authorization': `Bearer ${savedAiKey}`,
-                                  'Content-Type': 'application/json' 
-                              }, 
-                              body: JSON.stringify(payload) 
-                          });
-                          if (!response.ok) {
-                              const errData = await response.json().catch(()=>({}));
-                              throw new Error(errData.error?.message || `HTTP ${response.status}`);
-                          }
-                          result = await response.json();
-                          break; 
+                          const response = await fetch(url, { method: 'POST', headers: { 'Authorization': `Bearer ${savedAiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                          result = await response.json(); break; 
                       } catch (error) {
-                          retries--;
-                          if (retries === 0) throw error;
-                          await new Promise(r => setTimeout(r, delay));
-                          delay *= 2;
+                          retries--; if (retries === 0) throw error;
+                          await new Promise(r => setTimeout(r, delay)); delay *= 2;
                       }
                   }
 
@@ -1010,151 +747,79 @@ JSON 字段要求：
                       let textResponse = result.choices[0].message.content;
                       let jsonStr = textResponse.match(/\[.*\]/s)?.[0];
                       if (!jsonStr) jsonStr = textResponse; 
-                      
                       try {
                           const parsedData = JSON.parse(jsonStr);
                           if (Array.isArray(parsedData) && parsedData.length > 0) {
-                              const count = handleBulkExpenseImport(parsedData);
-                              setRecognizeStatus(`太棒了！成功导入 ${count} 笔记录 🎉`);
-                          } else {
-                              setRecognizeStatus('未在图片中识别到有效的账单数据。');
-                          }
-                      } catch (e) {
-                           setRecognizeStatus('AI 返回的数据格式解析失败。');
-                      }
-                  } else {
-                      setRecognizeStatus('网络或识别失败，请检查您的 API 密钥是否正确。');
-                  }
-                  
+                              const count = handleBulkExpenseImport(parsedData); setRecognizeStatus(`太棒了！成功导入 ${count} 笔记录 🎉`);
+                          } else { setRecognizeStatus('未在图片中识别到有效的账单数据。'); }
+                      } catch (e) { setRecognizeStatus('AI 返回的数据格式解析失败。'); }
+                  } else { setRecognizeStatus('网络或识别失败，请检查您的 API 密钥是否正确。'); }
                   setTimeout(() => { setIsRecognizing(false); setRecognizeStatus(''); }, 4000);
-              } catch (error) {
-                  setRecognizeStatus(`请求失败: ${error.message}`);
-                  setTimeout(() => { setIsRecognizing(false); setRecognizeStatus(''); }, 5000);
-              }
+              } catch (error) { setRecognizeStatus(`请求失败: ${error.message}`); setTimeout(() => { setIsRecognizing(false); setRecognizeStatus(''); }, 5000); }
           };
-          
-          reader.onerror = () => {
-              setRecognizeStatus('读取图片失败。');
-              setTimeout(() => { setIsRecognizing(false); setRecognizeStatus(''); }, 4000);
-          };
+          reader.onerror = () => { setRecognizeStatus('读取图片失败。'); setTimeout(() => { setIsRecognizing(false); setRecognizeStatus(''); }, 4000); };
       };
 
       const handleExportExpenses = () => {
           if (Object.keys(expenses).length === 0) return;
           let csvContent = "所属月份,日期,时间,收支类型,分类/备注,金额\n";
-          
           let allExps = [];
-          Object.keys(expenses).forEach(monthKey => {
-              (expenses[monthKey] || []).forEach(e => {
-                  allExps.push({ ...e, monthKey });
-              });
-          });
-          
-          allExps.sort((a, b) => {
-              const dateA = new Date(`${a.date}T${a.time}`);
-              const dateB = new Date(`${b.date}T${b.time}`);
-              return dateB - dateA;
-          });
-
+          Object.keys(expenses).forEach(monthKey => { (expenses[monthKey] || []).forEach(e => { allExps.push({ ...e, monthKey }); }); });
+          allExps.sort((a, b) => { const dateA = new Date(`${a.date}T${a.time}`); const dateB = new Date(`${b.date}T${b.time}`); return dateB - dateA; });
           allExps.forEach(e => {
               const typeStr = e.type === 'in' ? '收入' : '支出';
               const desc = (e.desc || '').replace(/"/g, '""'); 
               csvContent += `"${e.monthKey}","${e.date}","${e.time}","${typeStr}","${desc}","${e.amount}"\n`;
           });
-
           const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csvContent], { type: 'text/csv;charset=utf-8;' });
-          const link = document.createElement("a"); 
-          link.setAttribute("href", URL.createObjectURL(blob)); 
-          link.setAttribute("download", `个人账单明细_${getTodayDateString()}.csv`);
-          document.body.appendChild(link); 
-          link.click(); 
-          document.body.removeChild(link);
+          const link = document.createElement("a"); link.setAttribute("href", URL.createObjectURL(blob)); link.setAttribute("download", `个人账单明细_${getTodayDateString()}.csv`);
+          document.body.appendChild(link); link.click(); document.body.removeChild(link);
       };
 
       const handleAIAnalysis = async () => {
           const savedAiKey = localStorage.getItem('customAiApiKey') || defaultAiApiKey;
-          if (!savedAiKey) {
-              alert("请先配置您的 API Key！");
-              return;
-          }
-
-          setIsAnalyzing(true);
-          setAiAnalysisResult('AI 顶级财务顾问正在翻阅您的账单，请稍候...');
+          if (!savedAiKey) { alert("请先配置您的 API Key！"); return; }
+          setIsAnalyzing(true); setAiAnalysisResult('AI 顶级财务顾问正在翻阅您的账单，请稍候...');
 
           try {
               const currentMonthExps = expenses[`${systemYear}-${String(viewMonth).padStart(2,'0')}`] || [];
               const totalIn = currentMonthExps.filter(e => e.type === 'in').reduce((s, e) => s + Number(e.amount), 0);
               const totalOut = currentMonthExps.filter(e => e.type === 'out').reduce((s, e) => s + Number(e.amount), 0);
               
-              if (currentMonthExps.length === 0) {
-                  setAiAnalysisResult('当前月份还没有任何账单记录哦，赶紧记几笔账或者换个有账单的月份再来找我分析吧！');
-                  setIsAnalyzing(false);
-                  return;
-              }
+              if (currentMonthExps.length === 0) { setAiAnalysisResult('当前月份还没有任何账单记录哦，赶紧记几笔账或者换个有账单的月份再来找我分析吧！'); setIsAnalyzing(false); return; }
 
               const detailStr = currentMonthExps.map(e => `${e.date} | ${e.type === 'in' ? '收入' : '支出'} | ${e.desc} | ¥${e.amount}`).join('\n');
-
               const prompt = `你是一位世界顶级的私人财富管理顾问。请根据我本月（${viewMonth}月）的以下账单明细进行深度财务诊断。
 本月总收入：${totalIn.toFixed(2)} 元
 本月总支出：${totalOut.toFixed(2)} 元
 本月结余：${(totalIn - totalOut).toFixed(2)} 元
-
-【详细账单数据】
-${detailStr}
-
+【详细账单数据】\n${detailStr}
 【你的任务】
 1. 消费结构分析：找出我的主要开销分类及占比。
 2. 异常支出诊断：犀利地指出哪些可能是冲动消费或“拿铁因子”（不必要的小额开销）。
 3. 行动建议：给我 3 条切实可行的下个月生活消费和理财建议。
-要求：语气专业、客观但不失亲切，直接输出排版优美的纯文本（可使用 emoji，但不要使用 markdown 代码块包裹）。`;
+要求：语气专业、客观但不失亲切，直接输出排版优美的纯文本。`;
 
               const url = 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
-              const payload = {
-                  model: "qwen-vl-max", 
-                  messages: [{
-                      role: "user",
-                      content: [{ type: "text", text: prompt }]
-                  }]
-              };
+              const payload = { model: "qwen-vl-max", messages: [{ role: "user", content: [{ type: "text", text: prompt }] }] };
 
-              const response = await fetch(url, {
-                  method: 'POST',
-                  headers: {
-                      'Authorization': `Bearer ${savedAiKey}`,
-                      'Content-Type': 'application/json'
-                  },
-                  body: JSON.stringify(payload)
-              });
-
+              const response = await fetch(url, { method: 'POST', headers: { 'Authorization': `Bearer ${savedAiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
               if (!response.ok) throw new Error(`HTTP Error ${response.status}`);
               const result = await response.json();
-              if (result && result.choices && result.choices.length > 0) {
-                  setAiAnalysisResult(result.choices[0].message.content);
-              } else {
-                  setAiAnalysisResult('分析生成失败，大模型返回为空，请稍后重试。');
-              }
-          } catch (error) {
-              setAiAnalysisResult(`请求大模型出错: ${error.message}`);
-          }
+              if (result && result.choices && result.choices.length > 0) { setAiAnalysisResult(result.choices[0].message.content); } 
+              else { setAiAnalysisResult('分析生成失败，大模型返回为空，请稍后重试。'); }
+          } catch (error) { setAiAnalysisResult(`请求大模型出错: ${error.message}`); }
           setIsAnalyzing(false);
       };
 
       const renderExpenseSummary = () => {
-          let yearlyIn = 0;
-          let yearlyOut = 0;
-          const currentYearPrefix = `${systemYear}-`;
-          
+          let yearlyIn = 0; let yearlyOut = 0; const currentYearPrefix = `${systemYear}-`;
           Object.keys(expenses).forEach(key => {
               if (key.startsWith(currentYearPrefix)) {
-                  (expenses[key] || []).forEach(e => {
-                      if (e.type === 'in') yearlyIn += Number(e.amount);
-                      if (e.type === 'out') yearlyOut += Number(e.amount);
-                  });
+                  (expenses[key] || []).forEach(e => { if (e.type === 'in') yearlyIn += Number(e.amount); if (e.type === 'out') yearlyOut += Number(e.amount); });
               }
           });
-
           const sortedMonths = Object.keys(expenses).sort().reverse();
-
           return (
               <div className="space-y-4 animate-in fade-in duration-500 pb-10">
                   <div className={`p-5 rounded-[1.5rem] flex justify-between items-center shadow-lg bg-gradient-to-br from-blue-600 to-purple-600 text-white`}>
@@ -1167,7 +832,6 @@ ${detailStr}
                           <div className="text-xs font-medium opacity-90">总出 <span className="font-bold font-mono text-red-200">¥{yearlyOut.toFixed(2)}</span></div>
                       </div>
                   </div>
-
                   <div className="space-y-3 mt-6">
                       {sortedMonths.map(monthKey => {
                           const monthExps = expenses[monthKey] || [];
@@ -1177,24 +841,16 @@ ${detailStr}
                           return (
                               <div key={monthKey} className={`p-4 rounded-xl border flex flex-col md:flex-row md:justify-between md:items-center gap-3 ${isDarkMode ? 'bg-[#1a2c38] border-[#213743]' : 'bg-white border-gray-200 shadow-sm'}`}>
                                   <div className="flex items-center gap-3">
-                                      <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-white ${mBal >= 0 ? 'bg-green-500' : 'bg-red-500'}`}>
-                                          {monthKey.split('-')[1]}月
-                                      </div>
+                                      <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-white ${mBal >= 0 ? 'bg-green-500' : 'bg-red-500'}`}>{monthKey.split('-')[1]}月</div>
                                       <div>
                                           <div className={`font-bold ${theme.textMain}`}>{monthKey.replace('-', '年')}</div>
                                           <div className={`text-[10px] ${theme.textSub}`}>当月结余 ¥{mBal.toFixed(2)}</div>
                                       </div>
                                   </div>
                                   <div className="flex gap-4 text-right">
-                                      <div>
-                                          <div className={`text-[10px] ${theme.textSub}`}>当月收入</div>
-                                          <div className="text-sm font-mono font-bold text-green-500">+{mIn.toFixed(2)}</div>
-                                      </div>
+                                      <div><div className={`text-[10px] ${theme.textSub}`}>当月收入</div><div className="text-sm font-mono font-bold text-green-500">+{mIn.toFixed(2)}</div></div>
                                       <div className="w-px bg-gray-200 dark:bg-gray-700"></div>
-                                      <div>
-                                          <div className={`text-[10px] ${theme.textSub}`}>当月支出</div>
-                                          <div className="text-sm font-mono font-bold text-red-500">-{mOut.toFixed(2)}</div>
-                                      </div>
+                                      <div><div className={`text-[10px] ${theme.textSub}`}>当月支出</div><div className="text-sm font-mono font-bold text-red-500">-{mOut.toFixed(2)}</div></div>
                                   </div>
                               </div>
                           )
@@ -1240,82 +896,44 @@ ${detailStr}
           if (num === undefined || num === null || isNaN(num)) return '';
           const n = Number(num);
           if (isRate) return (n * 100).toFixed(2) + '%';
-          
-          const isNegative = n < 0;
-          const absN = Math.abs(n);
-          let formatted = '';
-          
-          if (absN === 0) formatted = '0.00';
-          else if (absN >= 10000) formatted = (absN / 10000).toFixed(2) + '万';
-          else formatted = absN.toFixed(2);
-          
+          const isNegative = n < 0; const absN = Math.abs(n); let formatted = '';
+          if (absN === 0) formatted = '0.00'; else if (absN >= 10000) formatted = (absN / 10000).toFixed(2) + '万'; else formatted = absN.toFixed(2);
           return (isNegative ? '-' : '') + currencySymbol + formatted;
       };
 
-      // 提交平仓结算
       const handleClosePositionSubmit = () => {
-          const sellP = parseFloat(closePositionData.sellPrice);
-          const sellQ = parseFloat(closePositionData.sellQty);
-          if (isNaN(sellP) || isNaN(sellQ) || sellQ <= 0 || sellQ > closePositionData.qty) {
-              setClosePositionData(prev => ({...prev, error: '请输入有效的卖出价格和数量'}));
-              return;
-          }
+          const sellP = parseFloat(closePositionData.sellPrice); const sellQ = parseFloat(closePositionData.sellQty);
+          if (isNaN(sellP) || isNaN(sellQ) || sellQ <= 0 || sellQ > closePositionData.qty) { setClosePositionData(prev => ({...prev, error: '请输入有效的卖出价格和数量'})); return; }
           const action = () => {
               const realizedPnLThisTrade = (sellP - closePositionData.cost) * sellQ;
               const currentMarketInvestments = investments[investMarket] || { initialCapital: 0, records: {} };
               const currentRealized = currentMarketInvestments.realizedPnL || 0;
-              
-              const newInvestments = {
-                  ...investments,
-                  [investMarket]: {
-                      ...currentMarketInvestments,
-                      realizedPnL: currentRealized + realizedPnLThisTrade
-                  }
-              };
-
+              const newInvestments = { ...investments, [investMarket]: { ...currentMarketInvestments, realizedPnL: currentRealized + realizedPnLThisTrade } };
               let newPortfolio = [...portfolio];
-              if (sellQ === closePositionData.qty) {
-                  newPortfolio = newPortfolio.filter(p => p.id !== closePositionData.id);
-              } else {
-                  newPortfolio = newPortfolio.map(p => 
-                      p.id === closePositionData.id ? { ...p, quantity: p.quantity - sellQ } : p 
-                  );
-              }
-
+              if (sellQ === closePositionData.qty) { newPortfolio = newPortfolio.filter(p => p.id !== closePositionData.id); } 
+              else { newPortfolio = newPortfolio.map(p => p.id === closePositionData.id ? { ...p, quantity: p.quantity - sellQ } : p ); }
               saveData({ investments: newInvestments, portfolio: newPortfolio });
-              setShowCloseModal(false);
-              setClosePositionData({ id: '', code: '', name: '', qty: 0, cost: 0, sellPrice: '', sellQty: '', error: '' });
+              setShowCloseModal(false); setClosePositionData({ id: '', code: '', name: '', qty: 0, cost: 0, sellPrice: '', sellQty: '', error: '' });
           };
           requireAuth(action)();
       };
 
-      // 手动校准历史盈亏
       const handleEditRealizedSubmit = () => {
-          const val = parseFloat(editRealizedValue);
-          if (isNaN(val)) return;
+          const val = parseFloat(editRealizedValue); if (isNaN(val)) return;
           const action = () => {
               const currentMarketInvestments = investments[investMarket] || { initialCapital: 0, records: {} };
-              const newInvestments = {
-                  ...investments,
-                  [investMarket]: { ...currentMarketInvestments, realizedPnL: val }
-              };
-              saveData({ investments: newInvestments });
-              setShowEditRealizedModal(false);
-              setEditRealizedValue('');
+              const newInvestments = { ...investments, [investMarket]: { ...currentMarketInvestments, realizedPnL: val } };
+              saveData({ investments: newInvestments }); setShowEditRealizedModal(false); setEditRealizedValue('');
           };
           requireAuth(action)();
       };
 
       const handleAddPosition = () => {
-         const code = newPosition.code.trim().toLowerCase();
-         const qty = parseFloat(newPosition.quantity);
-         const cost = parseFloat(newPosition.costPrice);
+         const code = newPosition.code.trim().toLowerCase(); const qty = parseFloat(newPosition.quantity); const cost = parseFloat(newPosition.costPrice);
          if(!code || isNaN(qty) || isNaN(cost)) return alert('请填写完整的持仓信息');
          const action = () => {
              const newItem = { id: Date.now().toString(), market: investMarket, code, quantity: qty, costPrice: cost };
-             saveData({ portfolio: [...portfolio, newItem] });
-             setShowPortfolioModal(false);
-             setNewPosition({ code: '', quantity: '', costPrice: '' });
+             saveData({ portfolio: [...portfolio, newItem] }); setShowPortfolioModal(false); setNewPosition({ code: '', quantity: '', costPrice: '' });
          };
          requireAuth(action)();
       };
@@ -1323,50 +941,6 @@ ${detailStr}
       const handleRemovePosition = (id) => {
          const action = () => { saveData({ portfolio: portfolio.filter(p => p.id !== id) }); };
          requireAuth(action)();
-      };
-
-      const handleAddClient = () => {
-        if (!newClient.name || !newClient.date) return;
-        let nextRemindDate = null;
-        if(parseInt(newClient.remindDays) > 0) { const d = new Date(); d.setDate(d.getDate() + parseInt(newClient.remindDays)); nextRemindDate = d.getTime(); }
-        const newClientData = { id: Date.now().toString(), date: newClient.date, name: newClient.name, phone: newClient.phone, location: phoneLocation, level: newClient.level, nextRemindDate: nextRemindDate, followUps: [] };
-        saveData({ clients: [newClientData, ...clients] });
-        setNewClient({ date: getTodayDateString(), name: '', phone: '', level: 'B', remindDays: '0' }); setPhoneLocation('');
-        setCrmTab('list'); 
-      };
-
-      const handleAddFollowUp = (clientId) => {
-        if (!newFollowUp.trim()) return;
-        const now = new Date(); const dateString = `${now.getMonth() + 1}月${now.getDate()}日 ${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}`;
-        const newRecord = { id: Date.now().toString(), date: dateString, text: newFollowUp };
-        const updatedClients = clients.map(c => c.id === clientId ? { ...c, followUps: [newRecord, ...(c.followUps || [])] } : c);
-        saveData({ clients: updatedClients });
-        setNewFollowUp(''); setActiveClientForFollowUp(updatedClients.find(c => c.id === clientId));
-      };
-
-      const handleDeleteFollowUp = (clientId, followUpId) => {
-        const action = () => {
-          const updatedClients = clients.map(c => c.id === clientId ? { ...c, followUps: (c.followUps || []).filter(fu => fu.id !== followUpId) } : c);
-          saveData({ clients: updatedClients }); setActiveClientForFollowUp(updatedClients.find(c => c.id === clientId));
-        };
-        requireAuth(action)();
-      };
-
-      const handleClientAuth = () => {
-        if (clientPwdInput === '20120903') { setIsClientAuth(true); setClientPwdInput(''); } 
-        else { setClientPwdInput(''); setPwdErrorShake(true); setTimeout(() => setPwdErrorShake(false), 500); }
-      };
-
-      const handleExportData = () => {
-        if (clients.length === 0) return;
-        let csvContent = "客户姓名,录入日期,联系电话,归属地,客户级别,跟进记录\n";
-        clients.forEach(c => {
-          let followUpDetails = c.followUps && c.followUps.length > 0 ? c.followUps.map(fu => `[${fu.date}] ${fu.text}`).join('\n') : "";
-          csvContent += `"${c.name}","${c.date}","${c.phone}","${c.location}","${c.level}","${followUpDetails.replace(/"/g, '""')}"\n`;
-        });
-        const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csvContent], { type: 'text/csv;charset=utf-8;' });
-        const link = document.createElement("a"); link.setAttribute("href", URL.createObjectURL(blob)); link.setAttribute("download", `客资_${getTodayDateString()}.csv`);
-        document.body.appendChild(link); link.click(); document.body.removeChild(link);
       };
 
       const currentMonthData = useMemo(() => allMonthData[viewMonth] || { bizStats: { live: [], video: [], leads: [], gmv: 0 }, habits: { reading: Array(31).fill(false), exercise: Array(31).fill(false), review: Array(31).fill(false) } }, [allMonthData, viewMonth]);
@@ -1382,11 +956,6 @@ ${detailStr}
       }, [currentWeekPlan, tasksCompleted]);
 
       const totalGMV = useMemo(() => Object.values(allMonthData).reduce((sum, m) => sum + (m.bizStats && m.bizStats.gmv ? m.bizStats.gmv : 0), 0), [allMonthData]);
-
-      const sortedClients = useMemo(() => {
-          const priority = { 'S': 3, 'A': 2, 'B': 1, 'C': 0 };
-          return [...clients].sort((a, b) => (priority[b.level] || 0) - (priority[a.level] || 0));
-      }, [clients]);
 
       const theme = {
         isDark: isDarkMode,
@@ -1411,98 +980,55 @@ ${detailStr}
       let totalMarketValue = 0, totalCost = 0, todayPnL = 0;
       const enrichedPortfolio = activePortfolio.map(item => {
           const sData = stockData.find(s => s.code === item.code) || {};
-          const price = parseFloat(sData.price) || 0;
-          const change = parseFloat(sData.change) || 0;
-          const mv = item.quantity * price;
-          const cst = item.quantity * item.costPrice;
-          const pnl = mv - cst;
-          const todayItemPnL = item.quantity * change;
+          const price = parseFloat(sData.price) || 0; const change = parseFloat(sData.change) || 0;
+          const mv = item.quantity * price; const cst = item.quantity * item.costPrice;
+          const pnl = mv - cst; const todayItemPnL = item.quantity * change;
           totalMarketValue += mv; totalCost += cst; todayPnL += todayItemPnL;
           return { ...item, sData, price, change, mv, cst, pnl, todayItemPnL };
       });
       const totalUnrealizedPnL = totalMarketValue - totalCost; 
       const realizedPnL = investments[investMarket]?.realizedPnL || 0; 
       const totalPnL = totalUnrealizedPnL + realizedPnL; 
-      
       const todayPnLPct = totalCost > 0 ? (todayPnL / totalCost) * 100 : 0;
       const totalPnLPct = totalCost > 0 ? (totalPnL / totalCost) * 100 : 0;
 
-      // AI 生成股票持仓诊断报告
       const handleInvestAIAnalysis = async () => {
           const savedAiKey = localStorage.getItem('customAiApiKey') || defaultAiApiKey;
-          if (!savedAiKey) {
-              alert("请先配置您的 API Key！");
-              return;
-          }
-
-          setIsInvestAnalyzing(true);
-          setInvestAiAnalysisResult('华尔街 AI 交易员正在为您扫描持仓和风险敞口，请稍候...');
+          if (!savedAiKey) { alert("请先配置您的 API Key！"); return; }
+          setIsInvestAnalyzing(true); setInvestAiAnalysisResult('华尔街 AI 交易员正在为您扫描持仓和风险敞口，请稍候...');
 
           try {
-              if (enrichedPortfolio.length === 0) {
-                  setInvestAiAnalysisResult('当前账户没有任何持仓数据，无法进行诊断。请先点击“录入”添加您的持仓！');
-                  setIsInvestAnalyzing(false);
-                  return;
-              }
-
+              if (enrichedPortfolio.length === 0) { setInvestAiAnalysisResult('当前账户没有任何持仓数据，无法进行诊断。请先点击“录入”添加您的持仓！'); setIsInvestAnalyzing(false); return; }
               const currency = investMarket === 'US' ? '美元' : '人民币';
-              const detailStr = enrichedPortfolio.map(item =>
-                  `- ${item.sData.name || item.code} (${item.code.toUpperCase()})：数量 ${item.quantity}，成本价 ${item.costPrice}，现价 ${item.price.toFixed(2)}，持仓市值 ${item.mv.toFixed(2)}，浮动盈亏 ${item.pnl.toFixed(2)}`
-              ).join('\n');
-
+              const detailStr = enrichedPortfolio.map(item => `- ${item.sData.name || item.code} (${item.code.toUpperCase()})：数量 ${item.quantity}，成本价 ${item.costPrice}，现价 ${item.price.toFixed(2)}，持仓市值 ${item.mv.toFixed(2)}，浮动盈亏 ${item.pnl.toFixed(2)}`).join('\n');
               const prompt = `你是一位华尔街顶级的量化分析师和财富管理专家。请根据我当前的股票持仓和盈亏数据，进行深度的投资诊断。
-
 【当前账户（${investMarket === 'US' ? '美股' : 'A股'}）整体情况】
 计价货币：${currency}
 总市值：${totalMarketValue.toFixed(2)}
 总成本：${totalCost.toFixed(2)}
 累计总盈亏：${totalPnL.toFixed(2)} （含已结盈亏：${realizedPnL.toFixed(2)}，持仓浮动盈亏：${totalUnrealizedPnL.toFixed(2)}）
 今日浮动盈亏：${todayPnL.toFixed(2)}
-
-【当前持仓明细】
-${detailStr}
-
+【当前持仓明细】\n${detailStr}
 【你的任务】
 1. 仓位集中度与风险评估：分析我的持仓结构是否有单只股票仓位过重、风险暴露过高的隐患。
 2. 盈亏健康度诊断：客观评价目前的浮盈/浮亏状态，结合常识推测这些标的（如科技股、宽基ETF等）的特性，给出健康度评价。
 3. 顶级的调仓与操作建议：给我 3 条绝对专业、冷静、且具备可执行性的近期操作建议（如动态再平衡、止盈止损线设置、或是保持耐心观望）。
-要求：语气极其专业、客观且一针见血，直接输出排版优美的纯文本（可使用emoji，但绝对不要使用markdown代码块包裹）。`;
+要求：语气极其专业、客观且一针见血，直接输出排版优美的纯文本。`;
 
               const url = 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
-              const payload = {
-                  model: "qwen-vl-max",
-                  messages: [{
-                      role: "user",
-                      content: [{ type: "text", text: prompt }]
-                  }]
-              };
+              const payload = { model: "qwen-vl-max", messages: [{ role: "user", content: [{ type: "text", text: prompt }] }] };
 
-              const response = await fetch(url, {
-                  method: 'POST',
-                  headers: {
-                      'Authorization': `Bearer ${savedAiKey}`,
-                      'Content-Type': 'application/json'
-                  },
-                  body: JSON.stringify(payload)
-              });
-
+              const response = await fetch(url, { method: 'POST', headers: { 'Authorization': `Bearer ${savedAiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
               if (!response.ok) throw new Error(`HTTP Error ${response.status}`);
               const result = await response.json();
-              if (result && result.choices && result.choices.length > 0) {
-                  let textResponse = result.choices[0].message.content;
-                  setInvestAiAnalysisResult(textResponse);
-              } else {
-                  setInvestAiAnalysisResult('分析生成失败，大模型返回为空，请稍后重试。');
-              }
-          } catch (error) {
-              setInvestAiAnalysisResult(`请求大模型出错: ${error.message}`);
-          }
+              if (result && result.choices && result.choices.length > 0) { setInvestAiAnalysisResult(result.choices[0].message.content); } 
+              else { setInvestAiAnalysisResult('分析生成失败，大模型返回为空，请稍后重试。'); }
+          } catch (error) { setInvestAiAnalysisResult(`请求大模型出错: ${error.message}`); }
           setIsInvestAnalyzing(false);
       };
 
       if (loading) return <div className={`min-h-screen flex items-center justify-center ${theme.bg}`}><RefreshCw className="animate-spin text-green-500 w-10 h-10" /></div>;
       const currentLogo = MONTH_LOGOS[viewMonth] || MONTH_LOGOS[3]; const CurrentIcon = currentLogo.icon;
-      const currentMonthExpenseList = Array.isArray(expenses[`${systemYear}-${String(viewMonth).padStart(2,'0')}`]) ? expenses[`${systemYear}-${String(viewMonth).padStart(2,'0')}`] : [];
 
       return (
         <div className={`min-h-screen relative overflow-x-hidden ${theme.bg} transition-all duration-1000 pb-20`}>
@@ -1528,7 +1054,7 @@ ${detailStr}
                 </div>
                 <div className="flex flex-wrap items-center gap-3 w-full justify-center xl:justify-start">
                   <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full shadow-sm ${isDarkMode ? 'bg-[#1a2c38] border border-[#213743]' : 'bg-white border border-[#d2d2d7]/50'}`}>
-                    <span className={`text-[11px] font-black ${isDarkMode ? 'text-[#34c759]' : 'text-blue-600'}`}>{["周日","周一","周二","周三","周四","周五","周六"][currentTime.getDay()]}</span>
+                    <span className={`text-[11px] font-black ${isDarkMode ? 'text-[#34c759]' : 'text-blue-600'}`}>{["周日","周一","周二","周三","周4","周五","周六"][currentTime.getDay()]}</span>
                     <span className={`text-xs font-bold font-mono ${theme.textMain}`}>{currentTime.toLocaleTimeString('zh-CN', { hour12: false })}</span>
                   </div>
                   <div className={`flex items-center gap-3 px-4 py-1.5 rounded-full shadow-sm ${theme.card}`} title={`嘉兴实时天气: ${weather.desc}`}>
@@ -1542,7 +1068,18 @@ ${detailStr}
               </div>
               <div className="flex flex-wrap items-center gap-3">
                 <button onClick={() => setShowCalc(true)} className={`p-3 rounded-full flex items-center justify-center shadow-md active:scale-90 ${isDarkMode ? 'bg-[#213743] text-[#34c759]' : 'bg-white text-blue-600'}`}><Calculator className="w-4 h-4" /></button>
-                <button onClick={() => {setShowClientModal(true); setCrmTab('list'); setActiveClientForFollowUp(null);}} className={`p-3 rounded-full flex items-center justify-center shadow-md active:scale-90 ${isDarkMode ? 'bg-[#213743] text-purple-400' : 'bg-white text-purple-600'}`}><UserPlus className="w-4 h-4" /></button>
+                
+                {/* === CRM 独立系统入口 (含环境防呆提示) === */}
+                <a href="./crm.html" target="_blank" rel="noopener noreferrer" onClick={(e) => {
+                    // 如果在本地预览或 AI 沙盒环境中，拦截并提示用户
+                    if (window.location.hostname.includes('gemini.google.com') || window.location.href.includes('about:blank') || window.location.href.includes('blob:')) {
+                        e.preventDefault();
+                        alert('【沙盒预览限制】\n\nAI 预览环境无法进行页面间跳转。\n\n如需正常使用，请将刚才生成的 crm.html 和本页的 index.html 一同上传至您的 GitHub Pages (toxuebin.github.io) 根目录即可！');
+                    }
+                }} className={`p-3 rounded-full flex items-center justify-center shadow-md active:scale-90 transition-transform hover:scale-105 ${isDarkMode ? 'bg-[#213743] text-purple-400' : 'bg-white text-purple-600'}`} title="打开专属客户管理系统">
+                    <UserPlus className="w-4 h-4" />
+                </a>
+
                 <button onClick={() => setShowSettingsModal(true)} className={`p-3 rounded-full flex items-center justify-center shadow-md active:scale-90 ${isDarkMode ? 'bg-[#213743] text-blue-400' : 'bg-white text-blue-500'} relative`}>
                     <Cloud className="w-4 h-4" />
                     {!db && <span className={`absolute top-0 right-0 w-2.5 h-2.5 bg-red-500 border-2 rounded-full ${isDarkMode ? 'border-[#213743]' : 'border-white'}`}></span>}
@@ -1825,12 +1362,8 @@ ${detailStr}
                             
                             let displayVal = '--';
                             if (mTotal !== 0) {
-                                if (calendarViewMode === 'amount') {
-                                    displayVal = formatInvestNum(mTotal, false, investMarket === 'US' ? '$' : '¥');
-                                } else {
-                                    const pct = totalCost > 0 ? (mTotal / totalCost) * 100 : 0;
-                                    displayVal = (pct > 0 ? '+' : '') + pct.toFixed(2) + '%';
-                                }
+                                if (calendarViewMode === 'amount') { displayVal = formatInvestNum(mTotal, false, investMarket === 'US' ? '$' : '¥'); } 
+                                else { const pct = totalCost > 0 ? (mTotal / totalCost) * 100 : 0; displayVal = (pct > 0 ? '+' : '') + pct.toFixed(2) + '%'; }
                             }
 
                             return (
@@ -1893,14 +1426,18 @@ ${detailStr}
                    )}
                 </div>
 
-                {/* === Polymarket 全球预测模块 === */}
                 <div className={`${theme.card} rounded-[2rem] border-none overflow-hidden shadow-2xl p-4 md:p-6 mt-4`}>
                     <div className={`flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-5 pb-4 border-b ${isDarkMode ? 'border-[#213743]' : 'border-gray-200'}`}>
                         <div className="flex items-center gap-2">
                             <div className="p-2 bg-indigo-500/10 text-indigo-500 rounded-xl"><Radar className="w-5 h-5"/></div>
                             <h3 className={`text-base font-bold tracking-tight ${theme.textMain}`}>Polymarket 全球预测龙头</h3>
                         </div>
-                        <div className={`text-[10px] font-bold ${theme.textSub}`}>按 24H 实时热度抓取 Top 10</div>
+                        <div className="flex items-center gap-2">
+                            <div className={`text-[10px] font-bold ${theme.textSub}`}>全网 Top 40 热榜 · 每小时自动轮换</div>
+                            <button onClick={() => setPolyPage(prev => (prev + 1) % Math.max(1, Math.ceil(polyMarkets.length / 10)))} className={`p-1.5 rounded-md shadow-sm active:scale-95 transition-all flex items-center justify-center ${isDarkMode ? 'bg-[#213743] text-indigo-400 hover:bg-indigo-500/20' : 'bg-white text-indigo-600 border border-gray-200 hover:bg-indigo-50'}`} title="换一批">
+                                <RefreshCw className={`w-3.5 h-3.5 ${polyLoading ? 'animate-spin' : ''}`} />
+                            </button>
+                        </div>
                     </div>
                     
                     <div className="space-y-3">
@@ -1918,66 +1455,34 @@ ${detailStr}
                                 <button onClick={() => window.location.reload()} className={`mt-2 px-6 py-2 rounded-lg text-xs font-bold shadow-md transition-transform active:scale-95 ${isDarkMode ? 'bg-[#213743] text-white hover:bg-white/10' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}>重新连接</button>
                             </div>
                         ) : (
-                            polyMarkets.map((market, idx) => {
-                                let bestPrice = 0;
-                                let leadingOutcome = '';
-                                
+                            polyMarkets.slice(polyPage * 10, polyPage * 10 + 10).map((market, idx) => {
+                                let bestPrice = 0; let leadingOutcome = '';
                                 try {
-                                    let prices = [];
-                                    let outcomes = [];
-
-                                    if (market.outcomePrices) {
-                                        let parsed = typeof market.outcomePrices === 'string' ? JSON.parse(market.outcomePrices) : market.outcomePrices;
-                                        if (Array.isArray(parsed)) prices = parsed.map(p => parseFloat(p));
-                                    } else if (market.tokens && Array.isArray(market.tokens)) {
-                                        prices = market.tokens.map(t => parseFloat(t.price || 0));
-                                    }
-
-                                    if (market.outcomes) {
-                                        let parsedOutcomes = typeof market.outcomes === 'string' ? JSON.parse(market.outcomes) : market.outcomes;
-                                        if (Array.isArray(parsedOutcomes)) outcomes = parsedOutcomes;
-                                    } else if (market.tokens && Array.isArray(market.tokens)) {
-                                        outcomes = market.tokens.map(t => t.outcome || t.name || '');
-                                    }
+                                    let prices = []; let outcomes = [];
+                                    if (market.outcomePrices) { let parsed = typeof market.outcomePrices === 'string' ? JSON.parse(market.outcomePrices) : market.outcomePrices; if (Array.isArray(parsed)) prices = parsed.map(p => parseFloat(p)); } 
+                                    else if (market.tokens && Array.isArray(market.tokens)) { prices = market.tokens.map(t => parseFloat(t.price || 0)); }
+                                    if (market.outcomes) { let parsedOutcomes = typeof market.outcomes === 'string' ? JSON.parse(market.outcomes) : market.outcomes; if (Array.isArray(parsedOutcomes)) outcomes = parsedOutcomes; } 
+                                    else if (market.tokens && Array.isArray(market.tokens)) { outcomes = market.tokens.map(t => t.outcome || t.name || ''); }
 
                                     const validPrices = prices.filter(p => !isNaN(p) && p > 0 && p < 1);
                                     if (validPrices.length > 0) {
                                         const yesIndex = outcomes.findIndex(o => typeof o === 'string' && o.toLowerCase() === 'yes');
-                                        if (yesIndex !== -1 && !isNaN(prices[yesIndex])) {
-                                            bestPrice = prices[yesIndex];
-                                            leadingOutcome = 'Yes';
-                                        } else {
-                                            bestPrice = Math.max(...validPrices);
-                                            const maxIdx = prices.indexOf(bestPrice);
-                                            if (maxIdx > -1 && outcomes[maxIdx]) {
-                                                leadingOutcome = outcomes[maxIdx];
-                                            }
-                                        }
+                                        if (yesIndex !== -1 && !isNaN(prices[yesIndex])) { bestPrice = prices[yesIndex]; leadingOutcome = 'Yes'; } 
+                                        else { bestPrice = Math.max(...validPrices); const maxIdx = prices.indexOf(bestPrice); if (maxIdx > -1 && outcomes[maxIdx]) leadingOutcome = outcomes[maxIdx]; }
                                     }
                                 } catch (err) {}
                                 
-                                let displayProb = '--%';
-                                let displayOdds = '--';
-                                let isHighProb = false;
-
+                                let displayProb = '--%'; let displayOdds = '--'; let isHighProb = false;
                                 if (bestPrice && !isNaN(bestPrice) && bestPrice > 0 && bestPrice < 1) {
-                                    const probNum = bestPrice * 100;
-                                    displayProb = probNum.toFixed(1) + '%';
-                                    displayOdds = (1 / bestPrice).toFixed(2); 
-                                    isHighProb = probNum >= 50;
+                                    const probNum = bestPrice * 100; displayProb = probNum.toFixed(1) + '%'; displayOdds = (1 / bestPrice).toFixed(2); isHighProb = probNum >= 50;
                                 }
 
                                 let polyLink = 'https://polymarket.com/';
-                                if (market.events && market.events.length > 0 && market.events[0].slug) {
-                                    polyLink = `https://polymarket.com/event/${market.events[0].slug}`;
-                                } else if (market.slug) {
-                                    polyLink = `https://polymarket.com/event/${market.slug}`;
-                                } else {
-                                    polyLink = `https://polymarket.com/markets?search=${encodeURIComponent(market.question)}`;
-                                }
+                                if (market.events && market.events.length > 0 && market.events[0].slug) polyLink = `https://polymarket.com/event/${market.events[0].slug}`;
+                                else if (market.slug) polyLink = `https://polymarket.com/event/${market.slug}`;
+                                else polyLink = `https://polymarket.com/markets?search=${encodeURIComponent(market.question)}`;
                                 
                                 const displayTitle = polyTranslations[market.question] || market.question;
-                                
                                 let displayOutcome = leadingOutcome;
                                 if (leadingOutcome === 'Yes') displayOutcome = '是';
                                 if (leadingOutcome === 'No') displayOutcome = '否';
@@ -1986,29 +1491,19 @@ ${detailStr}
                                     <a key={market.id || idx} href={polyLink} target="_blank" rel="noreferrer" title="点击前往 Polymarket 官网查看详情" 
                                        className={`flex items-center justify-between p-4 rounded-xl border ${isDarkMode ? 'bg-[#0f212e] border-[#213743] hover:bg-white/5' : 'bg-gray-50/50 border-gray-100 hover:bg-blue-50/50'} hover:scale-[1.01] hover:shadow-md transition-all cursor-pointer group`}>
                                         <div className="w-[55%] flex flex-col gap-1 pr-2 relative">
-                                            <div className={`text-sm md:text-base font-bold line-clamp-2 leading-snug ${theme.textMain} group-hover:text-indigo-500 transition-colors`}>
-                                                {displayTitle}
-                                            </div>
-                                            <div className={`text-[10px] font-mono opacity-50 line-clamp-1 ${theme.textSub}`}>
-                                                {market.question}
-                                            </div>
+                                            <div className={`text-sm md:text-base font-bold line-clamp-2 leading-snug ${theme.textMain} group-hover:text-indigo-500 transition-colors`}>{displayTitle}</div>
+                                            <div className={`text-[10px] font-mono opacity-50 line-clamp-1 ${theme.textSub}`}>{market.question}</div>
                                             <ExternalLink className="w-3 h-3 absolute -right-2 top-1 text-indigo-400 opacity-0 group-hover:opacity-100 transition-opacity" />
                                         </div>
                                         <div className="w-[45%] flex justify-end gap-3 md:gap-5 items-center">
                                             <div className="text-right">
                                                 <div className={`text-[10px] ${theme.textSub} mb-1`}>24H交易额</div>
-                                                <div className={`text-xs md:text-sm font-mono font-bold ${theme.textMain}`}>
-                                                    ${formatPolyVol(market.volume24hr || market.volumeNum || market.volume)}
-                                                </div>
+                                                <div className={`text-xs md:text-sm font-mono font-bold ${theme.textMain}`}>${formatPolyVol(market.volume24hr || market.volumeNum || market.volume)}</div>
                                             </div>
                                             <div className="text-right w-20 md:w-24">
                                                 <div className={`text-[10px] ${theme.textSub} mb-1`}>欧盘赔率</div>
-                                                <div className={`text-sm md:text-lg font-black font-mono ${isHighProb ? 'text-green-500' : 'text-red-500'}`}>
-                                                    {displayOdds}
-                                                </div>
-                                                <div className={`text-[8px] mt-0.5 font-bold ${theme.textSub} line-clamp-1`} title={displayOutcome}>
-                                                    胜率: {displayProb} {displayOutcome && displayOutcome !== '是' ? `(${displayOutcome})` : ''}
-                                                </div>
+                                                <div className={`text-sm md:text-lg font-black font-mono ${isHighProb ? 'text-green-500' : 'text-red-500'}`}>{displayOdds}</div>
+                                                <div className={`text-[8px] mt-0.5 font-bold ${theme.textSub} line-clamp-1`} title={displayOutcome}>胜率: {displayProb} {displayOutcome && displayOutcome !== '是' ? `(${displayOutcome})` : ''}</div>
                                             </div>
                                         </div>
                                     </a>
@@ -2070,42 +1565,28 @@ ${detailStr}
           {showExpenseModal && (
             <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60 backdrop-blur-sm" onClick={(e) => { if(e.target === e.currentTarget) setShowExpenseModal(false); }}>
                <div className={`${theme.modalBg} rounded-t-[2rem] sm:rounded-[2rem] w-full max-w-xl h-[85vh] sm:h-[80vh] shadow-2xl flex flex-col transform transition-transform ${isDarkMode ? 'border border-[#213743]' : ''} overflow-hidden`}>
-                 
-                 {/* 模态框头部 */}
                  <div className={`p-5 border-b flex justify-between items-center shrink-0 ${isDarkMode ? 'border-[#213743]' : 'border-gray-200'}`}>
-                    <h2 className={`text-lg font-bold flex items-center gap-2 ${theme.textMain}`}>
-                        <Receipt className="w-5 h-5 text-blue-500" />
-                        个人记账中心
-                    </h2>
+                    <h2 className={`text-lg font-bold flex items-center gap-2 ${theme.textMain}`}><Receipt className="w-5 h-5 text-blue-500" />个人记账中心</h2>
                     <div className="flex items-center gap-3">
-                        <button onClick={handleExportExpenses} className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 ${isDarkMode ? 'bg-[#213743] text-gray-300 hover:bg-white/10' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
-                            <DownloadCloud className="w-3.5 h-3.5" /> 导出 CSV
-                        </button>
+                        <button onClick={handleExportExpenses} className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 ${isDarkMode ? 'bg-[#213743] text-gray-300 hover:bg-white/10' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}><DownloadCloud className="w-3.5 h-3.5" /> 导出 CSV</button>
                         <button onClick={() => setShowExpenseModal(false)} className="p-1"><X className={`w-5 h-5 ${theme.textSub}`}/></button>
                     </div>
                  </div>
 
-                 {/* 标签页切换 */}
                  <div className={`px-5 pt-4 border-b shrink-0 flex gap-6 ${isDarkMode ? 'border-[#213743]' : 'border-gray-200'}`}>
                     {['账单明细', '年度/月度汇总', 'AI 财务分析'].map((t, i) => {
-                        const tabKeys = ['list', 'summary', 'analysis'];
-                        const currentTab = tabKeys[i];
-                        const isActive = expenseTab === currentTab;
+                        const tabKeys = ['list', 'summary', 'analysis']; const currentTab = tabKeys[i]; const isActive = expenseTab === currentTab;
                         return (
                             <button key={t} onClick={() => setExpenseTab(currentTab)} className={`text-sm font-bold pb-3 relative transition-colors ${isActive ? theme.textMain : theme.textSub}`}>
-                                {t}
-                                {isActive && <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-8 h-1 bg-blue-500 rounded-t-lg"></div>}
+                                {t}{isActive && <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-8 h-1 bg-blue-500 rounded-t-lg"></div>}
                             </button>
                         )
                     })}
                  </div>
 
-                 {/* 模态框内容区 */}
                  <div className="p-5 flex-1 overflow-y-auto">
-                    
                     {expenseTab === 'list' && (
                         <div className="space-y-6 animate-in fade-in duration-300">
-                            {/* AI 视觉账单导入区 */}
                             <div className={`p-4 rounded-2xl border-2 border-dashed flex flex-col items-center justify-center gap-2 relative overflow-hidden transition-all duration-300 ${isDarkMode ? 'border-[#213743] hover:bg-[#1a2c38]/50' : 'border-blue-200 hover:bg-blue-50/50'} ${isRecognizing ? 'bg-blue-50 dark:bg-[#1a2c38]' : ''}`}>
                                 <input type="file" accept="image/*" onChange={handleImageUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" disabled={isRecognizing} />
                                 {isRecognizing ? (
@@ -2115,9 +1596,7 @@ ${detailStr}
                                     </div>
                                 ) : (
                                     <div className="flex flex-col items-center pointer-events-none">
-                                        <div className="p-3 bg-blue-100 text-blue-600 rounded-full dark:bg-blue-500/20 dark:text-blue-400 mb-2 shadow-sm">
-                                            <UploadCloud className="w-6 h-6" />
-                                        </div>
+                                        <div className="p-3 bg-blue-100 text-blue-600 rounded-full dark:bg-blue-500/20 dark:text-blue-400 mb-2 shadow-sm"><UploadCloud className="w-6 h-6" /></div>
                                         <span className={`text-sm font-bold ${theme.textMain}`}>点击或拖拽上传账单截图</span>
                                         <span className={`text-xs mt-1 font-medium text-blue-500`}>AI 视觉自动识别并导入多笔记录</span>
                                         <span className={`text-[10px] mt-1 ${theme.textSub}`}>支持微信 / 支付宝长截图，自动识别金额和日期</span>
@@ -2157,203 +1636,29 @@ ${detailStr}
                             </div>
                         </div>
                     )}
-
-                    {expenseTab === 'summary' && (
-                        <div className="animate-in fade-in duration-300 h-full">
-                            {renderExpenseSummary()}
-                        </div>
-                    )}
-
+                    {expenseTab === 'summary' && <div className="animate-in fade-in duration-300 h-full">{renderExpenseSummary()}</div>}
                     {expenseTab === 'analysis' && (
                         <div className="space-y-5 animate-in fade-in duration-300 pb-10">
                             <div className={`p-4 rounded-2xl border flex items-start gap-4 ${isDarkMode ? 'bg-purple-900/10 border-purple-900/30' : 'bg-purple-50 border-purple-100'}`}>
-                                <div className="p-3 bg-purple-50 text-white rounded-full shrink-0 shadow-md">
-                                    <BrainCircuit className="w-6 h-6" />
-                                </div>
+                                <div className="p-3 bg-purple-50 text-white rounded-full shrink-0 shadow-md"><BrainCircuit className="w-6 h-6" /></div>
                                 <div>
                                     <h3 className={`font-bold text-base ${theme.textMain}`}>AI 专属财务管家</h3>
-                                    <p className={`text-xs mt-1 leading-relaxed ${theme.textSub}`}>
-                                        基于阿里云通义千问大模型，我将深度查阅您当前的收支结构，为您找出不合理的消费漏洞，并定制专属的攒钱与生活建议。
-                                    </p>
+                                    <p className={`text-xs mt-1 leading-relaxed ${theme.textSub}`}>基于阿里云通义千问大模型，我将深度查阅您当前的收支结构，为您找出不合理的消费漏洞，并定制专属的攒钱与生活建议。</p>
                                 </div>
                             </div>
-
                             <button onClick={handleAIAnalysis} disabled={isAnalyzing} className={`w-full py-4 rounded-xl font-bold text-white shadow-lg flex items-center justify-center gap-2 transition-all active:scale-95 ${isAnalyzing ? 'bg-gray-400 cursor-not-allowed' : 'bg-gradient-to-r from-purple-600 to-blue-600 hover:opacity-90'}`}>
                                 {isAnalyzing ? <RefreshCw className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5" />}
                                 {isAnalyzing ? 'AI 正在深度思考并撰写报告...' : `生成 ${viewMonth}月 深度财务诊断报告`}
                             </button>
-
                             {aiAnalysisResult && (
-                                <div className={`p-5 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap border shadow-inner ${isDarkMode ? 'bg-[#0f212e] border-[#213743] text-gray-300' : 'bg-white border-gray-200 text-gray-700'}`}>
-                                    {aiAnalysisResult}
-                                </div>
+                                <div className={`p-5 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap border shadow-inner ${isDarkMode ? 'bg-[#0f212e] border-[#213743] text-gray-300' : 'bg-white border-gray-200 text-gray-700'}`}>{aiAnalysisResult}</div>
                             )}
                         </div>
                     )}
-
                  </div>
                </div>
             </div>
           )}
-
-          {showClientModal && (
-            <div className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60 backdrop-blur-sm" onClick={(e) => { if(e.target === e.currentTarget) { setShowClientModal(false); setIsClientAuth(false); setActiveClientForFollowUp(null); setIsEditingClient(false); setEditingFollowUpId(null); } }}>
-              <div className={`${theme.modalBg} rounded-t-[2rem] sm:rounded-[2rem] w-full max-w-3xl h-[90vh] sm:h-[85vh] shadow-2xl flex flex-col border ${isDarkMode ? 'border-[#213743]' : 'border border-gray-200'}`}>
-                <div className={`p-4 border-b flex justify-between items-center ${isDarkMode ? 'border-[#213743]' : 'border-gray-200'}`}>
-                   <h2 className={`text-lg font-bold ${theme.textMain}`}>客户中心</h2>
-                   <div className="flex items-center gap-2">
-                     {isClientAuth && <button onClick={handleExportData} className="p-2 bg-gray-100 rounded-lg text-xs font-bold text-black">导出</button>}
-                     <button onClick={() => { setShowClientModal(false); setIsClientAuth(false); setActiveClientForFollowUp(null); setIsEditingClient(false); setEditingFollowUpId(null); }}><X className={`w-5 h-5 ${theme.textSub}`} /></button>
-                   </div>
-                </div>
-                <div className="p-4 md:p-6 overflow-y-auto flex-1">
-                  {!isClientAuth ? (
-                    <div className="flex flex-col items-center py-12 gap-6">
-                      <Lock className="w-16 h-16 text-gray-200" />
-                      <div className="flex gap-2 w-full max-w-xs">
-                        <input type="password" placeholder="解锁密码" value={clientPwdInput} onChange={(e) => setClientPwdInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleClientAuth()} className={`w-full px-4 py-3 rounded-xl border text-center ${theme.inputBg} ${theme.textMain}`} />
-                        <button onClick={handleClientAuth} className="px-6 py-3 bg-purple-600 text-white font-bold rounded-xl shadow-md">解锁</button>
-                      </div>
-                    </div>
-                  ) : activeClientForFollowUp ? (
-                    <div className="space-y-6">
-                        <button onClick={() => { setActiveClientForFollowUp(null); setIsEditingClient(false); setEditingFollowUpId(null); }} className="flex items-center gap-2 text-purple-500 font-bold hover:opacity-80 transition-opacity"><ArrowLeft className="w-4 h-4" /> 返回列表</button>
-                        
-                        {!isEditingClient ? (
-                            <div className={`p-5 rounded-2xl border flex justify-between items-start shadow-sm transition-all ${isDarkMode?'bg-[#0f212e] border-[#213743]':'bg-gray-50 border-gray-200'}`}>
-                               <div>
-                                   <div className="flex items-center gap-3">
-                                       <div className={`text-xl font-bold tracking-tight ${theme.textMain}`}>{activeClientForFollowUp.name}</div>
-                                       {activeClientForFollowUp.location && (
-                                           <span className={`px-2 py-0.5 rounded shadow-sm text-[10px] font-bold bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400`}>{activeClientForFollowUp.location}</span>
-                                       )}
-                                       <span className={`px-2 py-0.5 rounded shadow-sm text-[10px] font-bold text-white ${activeClientForFollowUp.level === 'S' ? 'bg-yellow-500' : 'bg-purple-500'}`}>{activeClientForFollowUp.level}级</span>
-                                   </div>
-                                   <div className={`text-sm mt-2 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 ${theme.textSub}`}>
-                                     <a href={`tel:${activeClientForFollowUp.phone}`} className="text-blue-500 font-bold hover:underline flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
-                                       <Phone className="w-3.5 h-3.5" /> {activeClientForFollowUp.phone || '无电话'}
-                                     </a>
-                                   </div>
-                               </div>
-                               <button onClick={() => { setIsEditingClient(true); setEditClientData(activeClientForFollowUp); }} className={`p-2.5 rounded-xl transition-colors ${isDarkMode?'bg-[#213743] text-gray-300 hover:text-white':'bg-white text-gray-400 hover:text-blue-500 shadow-sm border'}`} title="修改资料">
-                                   <Edit2 className="w-4 h-4" />
-                               </button>
-                            </div>
-                        ) : (
-                            <div className={`p-5 rounded-2xl border shadow-inner space-y-4 animate-in fade-in zoom-in-95 duration-200 ${isDarkMode?'bg-[#1a2c38] border-[#2f4553]':'bg-gray-100 border-gray-300'}`}>
-                                <div className="flex gap-2">
-                                    <div className="flex-1 flex flex-col gap-1">
-                                        <label className={`text-xs font-bold px-1 ${theme.textSub}`}>姓名</label>
-                                        <input type="text" value={editClientData.name} onChange={e=>setEditClientData({...editClientData, name: e.target.value})} className={`w-full px-3 py-2.5 rounded-xl border text-sm ${theme.inputBg} ${theme.textMain}`} placeholder="必填"/>
-                                    </div>
-                                    <div className="w-28 flex flex-col gap-1">
-                                        <label className={`text-xs font-bold px-1 ${theme.textSub}`}>等级</label>
-                                        <select value={editClientData.level} onChange={e=>setEditClientData({...editClientData, level: e.target.value})} className={`w-full px-2 py-2.5 rounded-xl border text-sm ${theme.inputBg} ${theme.textMain}`}>
-                                            <option value="S">S级</option><option value="A">A级</option><option value="B">B级</option><option value="C">C级</option>
-                                        </select>
-                                    </div>
-                                </div>
-                                <div className="flex flex-col gap-1">
-                                    <label className={`text-xs font-bold px-1 ${theme.textSub}`}>电话 (自动匹配归属地)</label>
-                                    <input type="tel" value={editClientData.phone} onChange={e=>handlePhoneChange(e, true)} className={`w-full px-3 py-2.5 rounded-xl border text-sm ${theme.inputBg} ${theme.textMain}`} placeholder="可选"/>
-                                    {editClientData.location && <div className={`text-[10px] pl-1 font-bold text-blue-500`}>📍 {editClientData.location}</div>}
-                                </div>
-                                <div className="flex gap-3 pt-2">
-                                    <button onClick={() => setIsEditingClient(false)} className={`flex-1 py-3 rounded-xl text-sm font-bold shadow-sm active:scale-95 transition-transform ${isDarkMode ? 'bg-[#2f4553] text-white' : 'bg-gray-200 text-gray-700'}`}>取消</button>
-                                    <button onClick={saveClientEdit} className="flex-[2] py-3 rounded-xl text-sm font-bold bg-blue-600 text-white shadow-md active:scale-95 transition-transform">保存修改</button>
-                                </div>
-                            </div>
-                        )}
-
-                        <div className="flex gap-2">
-                          <input type="text" placeholder="输入新的跟进记录..." value={newFollowUp} onChange={(e) => setNewFollowUp(e.target.value)} className={`flex-1 px-4 py-3 rounded-xl border ${theme.inputBg} ${theme.textMain}`} />
-                          <button onClick={() => handleAddFollowUp(activeClientForFollowUp.id)} className="px-6 py-3 bg-purple-600 text-white font-bold rounded-xl shadow-md active:scale-95 transition-transform">记录</button>
-                        </div>
-                        <div className="space-y-3">
-                           {(activeClientForFollowUp.followUps || []).map((fu, idx) => (
-                             <div key={fu.id || idx} className={`p-4 rounded-xl border transition-all ${isDarkMode?'bg-white/5 border-white/10':'bg-white border-gray-200 shadow-sm'}`}>
-                                <div className="flex justify-between items-center text-xs mb-2">
-                                    <time className="font-mono text-purple-400 font-bold bg-purple-400/10 px-2 py-0.5 rounded">{fu.date}</time>
-                                    <div className="flex items-center gap-3">
-                                        <button onClick={() => { setEditingFollowUpId(fu.id); setEditFollowUpText(fu.text); }} className={`p-1.5 rounded-lg transition-colors ${isDarkMode?'text-gray-400 hover:bg-white/10 hover:text-white':'text-gray-400 hover:bg-gray-100 hover:text-blue-500'}`} title="编辑记录">
-                                            <Edit2 className="w-3.5 h-3.5"/>
-                                        </button>
-                                        <button onClick={()=>handleDeleteFollowUp(activeClientForFollowUp.id, fu.id)} className={`p-1.5 rounded-lg transition-colors ${isDarkMode?'text-gray-400 hover:bg-red-500/20 hover:text-red-400':'text-gray-400 hover:bg-red-50 hover:text-red-500'}`} title="删除记录">
-                                            <Trash2 className="w-3.5 h-3.5"/>
-                                        </button>
-                                    </div>
-                                </div>
-                                {editingFollowUpId === fu.id ? (
-                                    <div className="flex flex-col gap-2 mt-2 animate-in fade-in duration-200">
-                                        <textarea value={editFollowUpText} onChange={(e)=>setEditFollowUpText(e.target.value)} className={`w-full p-3 rounded-lg border text-sm resize-none ${theme.inputBg} ${theme.textMain}`} rows="3" />
-                                        <div className="flex justify-end gap-2">
-                                            <button onClick={() => setEditingFollowUpId(null)} className={`px-4 py-1.5 rounded-lg text-xs font-bold ${isDarkMode ? 'bg-[#213743] text-white' : 'bg-gray-200 text-gray-700'}`}>取消</button>
-                                            <button onClick={() => saveFollowUpEdit(fu.id)} className="px-4 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white shadow-sm">保存修改</button>
-                                        </div>
-                                    </div>
-                                ) : (
-                                    <div className={`text-sm whitespace-pre-wrap leading-relaxed ${theme.textMain}`}>{fu.text}</div>
-                                )}
-                             </div>
-                           ))}
-                        </div>
-                    </div>
-                  ) : crmTab === 'add' ? (
-              <div className="space-y-4 max-w-md mx-auto">
-                  <div className="flex flex-col gap-1">
-                    <label className={`text-xs font-bold px-1 ${theme.textSub}`}>录入日期</label>
-                    <input type="date" value={newClient.date} onChange={e => setNewClient({...newClient, date: e.target.value})} className={`w-full px-4 py-3 rounded-xl border ${theme.inputBg} ${theme.textMain}`} />
-                  </div>
-                  <input type="text" placeholder="姓名*" value={newClient.name} onChange={e => setNewClient({...newClient, name: e.target.value})} className={`w-full px-4 py-3 rounded-xl border ${theme.inputBg} ${theme.textMain}`} />
-                  
-                  <div className="flex flex-col gap-1">
-                      <input type="tel" placeholder="电话 (自动匹配归属地)" value={newClient.phone} onChange={e => handlePhoneChange(e, false)} className={`w-full px-4 py-3 rounded-xl border ${theme.inputBg} ${theme.textMain}`} />
-                      {phoneLocation && <div className={`text-[10px] pl-2 font-bold text-blue-500 animate-in fade-in`}>📍 {phoneLocation}</div>}
-                  </div>
-
-                  <div className="flex flex-col gap-1">
-                    <label className={`text-xs font-bold px-1 ${theme.textSub}`}>等级划分</label>
-                    <select value={newClient.level} onChange={e => setNewClient({...newClient, level: e.target.value})} className={`w-full px-4 py-3 rounded-xl border ${theme.inputBg} ${theme.textMain}`}>
-                        <option value="S">S级 (核心重点)</option>
-                        <option value="A">A级 (高价值)</option>
-                        <option value="B">B级 (普通客户)</option>
-                        <option value="C">C级 (备用记录)</option>
-                    </select>
-                  </div>
-                  <button onClick={handleAddClient} className="w-full mt-2 py-4 bg-purple-600 text-white font-bold rounded-xl shadow-lg">保存客户资料</button>
-                  <button onClick={()=>setCrmTab('list')} className="w-full py-2 text-sm text-gray-500 font-bold">返回列表</button>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                <button onClick={()=>setCrmTab('add')} className="w-full py-3 bg-purple-100 text-purple-600 font-bold rounded-xl mb-4">+ 新增录入</button>
-                {sortedClients.map(client => (
-                  <div key={client.id} onClick={() => setActiveClientForFollowUp(client)} className={`flex items-center justify-between p-4 rounded-2xl border cursor-pointer ${client.level === 'S' ? (isDarkMode ? 'border-yellow-600 bg-yellow-900/10' : 'border-yellow-400 bg-yellow-50') : (isDarkMode ? 'bg-[#0f212e] border-[#213743]' : 'bg-white border-gray-200 shadow-sm')}`}>
-                    <div className="flex items-center gap-4">
-                      <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-white ${client.level === 'S' ? 'bg-yellow-500' : 'bg-purple-500'}`}>
-                         {client.level}
-                      </div>
-                      <div>
-                          <div className="flex items-center gap-2">
-                              <div className={`font-bold ${theme.textMain}`}>{client.name}</div>
-                              {client.location && <span className={`text-[10px] px-1.5 py-0.5 rounded-sm bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400`}>{client.location}</span>}
-                          </div>
-                          <div className={`text-xs mt-1 flex flex-wrap items-center gap-2 ${theme.textSub}`}>
-                              <a href={`tel:${client.phone}`} className="text-blue-500 hover:underline flex items-center gap-0.5" onClick={e => e.stopPropagation()}>
-                                  <Phone className="w-3 h-3" /> {client.phone || '无电话'}
-                              </a>
-                              <span className="opacity-60">· {client.date}</span>
-                          </div>
-                      </div>
-                    </div>
-                    <ChevronRight className="w-4 h-4 text-gray-400" />
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    )}
 
           {showPortfolioModal && (
             <div className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-black/60" onClick={(e) => { if(e.target === e.currentTarget) { setShowPortfolioModal(false); setNewPosition({ code: '', quantity: '', costPrice: '' }); } }}>
@@ -2374,12 +1679,10 @@ ${detailStr}
               <div className={`${theme.modalBg} p-6 rounded-[2rem] w-full max-w-sm shadow-2xl border ${isDarkMode ? 'border-[#213743]' : ''}`}>
                 <h3 className={`text-lg font-bold mb-1 ${theme.textMain}`}>平仓 / 调仓结算</h3>
                 <p className={`text-xs mb-4 ${theme.textSub}`}>结算的盈亏将自动计入“已结历史盈亏”中，防止换仓后利润丢失。</p>
-                
                 <div className={`p-3 rounded-xl mb-4 text-sm font-bold border flex justify-between items-center ${isDarkMode ? 'bg-[#1a2c38] border-[#213743]' : 'bg-gray-50 border-gray-200'} ${theme.textMain}`}>
                     <span>{closePositionData.name || closePositionData.code.toUpperCase()}</span>
                     <span className="text-[10px] font-normal text-gray-500">持仓: {closePositionData.qty} | 成本: {closePositionData.cost}</span>
                 </div>
-
                 <div className="space-y-4 mb-6">
                    <div className="flex flex-col gap-1">
                       <label className={`text-xs font-bold px-1 ${theme.textSub}`}>卖出价格</label>
@@ -2389,9 +1692,7 @@ ${detailStr}
                       <label className={`text-xs font-bold px-1 ${theme.textSub}`}>卖出数量 (最大 {closePositionData.qty})</label>
                       <input type="number" value={closePositionData.sellQty} onChange={e=>setClosePositionData({...closePositionData, sellQty: e.target.value, error: ''})} className={`w-full px-4 py-3 rounded-xl border ${theme.inputBg} ${theme.textMain}`} />
                    </div>
-                   
                    {closePositionData.error && <div className="text-xs text-red-500 font-bold px-1">{closePositionData.error}</div>}
-
                    <div className="flex justify-between items-center px-1 pt-2 border-t border-dashed border-gray-300 dark:border-gray-700">
                        <span className={`text-xs font-bold ${theme.textSub}`}>本次结转已实现盈亏:</span>
                        <span className={`text-base font-black font-mono ${((parseFloat(closePositionData.sellPrice||0) - closePositionData.cost) * parseFloat(closePositionData.sellQty||0)) >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>
@@ -2412,7 +1713,6 @@ ${detailStr}
               <div className={`${theme.modalBg} p-6 rounded-[2rem] w-full max-w-sm shadow-2xl border ${isDarkMode ? 'border-[#213743]' : ''}`}>
                 <h3 className={`text-lg font-bold mb-1 ${theme.textMain}`}>校准历史已结盈亏</h3>
                 <p className={`text-xs mb-4 ${theme.textSub}`}>手动调整历史已实现盈亏总额（正数盈利，负数亏损）</p>
-                
                 <div className="space-y-4 mb-6">
                    <div className="flex flex-col gap-1">
                        <label className={`text-xs font-bold px-1 ${theme.textSub}`}>{investMarket === 'US' ? '美股' : 'A股'} 历史盈亏</label>
@@ -2433,7 +1733,7 @@ ${detailStr}
                 <div className={`w-full h-16 rounded-xl mb-4 px-4 flex items-center justify-end text-3xl font-black font-mono overflow-x-auto ${isDarkMode?'bg-[#0f212e] text-white':'bg-gray-100 text-gray-900'}`}>{calcInput}</div>
                 <div className="grid grid-cols-4 gap-2">
                    {['C','DEL','%','÷','7','8','9','×','4','5','6','-','1','2','3','+','00','0','.','='].map((btn, i) => (
-                      <button key={i} onClick={() => handleCalcBtn(btn)} className={`h-12 rounded-xl text-lg font-bold ${['÷','×','-','+','='].includes(btn) ? 'bg-orange-500 text-white' : (isDarkMode?'bg-[#1a2c38] text-white shadow-md':'bg-white text-gray-900 border')}`}>{btn}</button>
+                      <button key={i} onClick={() => handleCalcBtn(btn)} className={`h-12 rounded-xl text-lg font-bold ${['÷','×','-','+','='].includes(btn) ? 'bg-orange-50 text-white' : (isDarkMode?'bg-[#1a2c38] text-white shadow-md':'bg-white text-gray-900 border')}`}>{btn}</button>
                    ))}
                 </div>
               </div>
@@ -2460,44 +1760,24 @@ ${detailStr}
                    <h2 className={`text-xl font-bold flex items-center gap-2 ${theme.textMain}`}><Cloud className="w-6 h-6 text-blue-500" /> 云端同步设置</h2>
                    <button onClick={() => setShowSettingsModal(false)}><X className={`w-6 h-6 ${theme.textSub}`}/></button>
                 </div>
-                
                 <div className="overflow-y-auto flex-1 pr-2 space-y-4">
                     <div className={`p-4 rounded-xl text-sm ${isDarkMode ? 'bg-blue-900/20 text-blue-300' : 'bg-blue-50 text-blue-700'}`}>
                         <p className="font-bold mb-1">您的专属版本已激活 🚀</p>
                         <p className="opacity-90">当前看板已经在底层代码中硬编码了您个人的 Firebase 数据库和 AI 接口。您无需再做任何配置，直接开始使用即可自动实现全端云同步！</p>
                     </div>
-
                     <div>
                         <label className={`block text-xs font-bold mb-2 ${theme.textSub}`}>Firebase Config (底层已内置，仅供查看)</label>
-                        <textarea 
-                            value={customConfigInput} 
-                            onChange={e => setCustomConfigInput(e.target.value)}
-                            className={`w-full h-24 p-3 rounded-xl border outline-none text-xs font-mono resize-none ${theme.inputBg} ${theme.textMain}`}
-                        />
+                        <textarea value={customConfigInput} onChange={e => setCustomConfigInput(e.target.value)} className={`w-full h-24 p-3 rounded-xl border outline-none text-xs font-mono resize-none ${theme.inputBg} ${theme.textMain}`} />
                     </div>
-                    
                     <div>
-                        <label className={`block text-xs font-bold mb-2 flex items-center gap-1 ${theme.textSub}`}><Key className="w-3.5 h-3.5"/> 跨设备同步密钥 (已内置为你设置的默认密码)</label>
-                        <input 
-                            type="text"
-                            value={syncKeyInput} 
-                            onChange={e => setSyncKeyInput(e.target.value)}
-                            className={`w-full p-3 rounded-xl border outline-none text-sm ${theme.inputBg} ${theme.textMain}`}
-                        />
+                        <label className={`block text-xs font-bold mb-2 flex items-center gap-1 ${theme.textSub}`}><Key className="w-3.5 h-3.5"/> 跨设备同步密钥 (已内置)</label>
+                        <input type="text" value={syncKeyInput} onChange={e => setSyncKeyInput(e.target.value)} className={`w-full p-3 rounded-xl border outline-none text-sm ${theme.inputBg} ${theme.textMain}`} />
                     </div>
-
-                    {/* 新增：阿里通义千问 API Key 配置区 */}
                     <div className="mt-4 pt-4 border-t border-gray-200 dark:border-[#213743]">
                         <label className={`block text-xs font-bold mb-2 flex items-center gap-1 ${theme.textSub}`}><Sparkles className="w-3.5 h-3.5 text-purple-500"/> 阿里通义千问 API Key (已内置)</label>
-                        <input 
-                            type="password"
-                            value={aiApiKeyInput} 
-                            onChange={e => setAiApiKeyInput(e.target.value)}
-                            className={`w-full p-3 rounded-xl border outline-none text-sm ${theme.inputBg} ${theme.textMain}`}
-                        />
+                        <input type="password" value={aiApiKeyInput} onChange={e => setAiApiKeyInput(e.target.value)} className={`w-full p-3 rounded-xl border outline-none text-sm ${theme.inputBg} ${theme.textMain}`} />
                     </div>
                 </div>
-
                 <div className="mt-6 pt-4 border-t border-gray-200 dark:border-[#213743] flex gap-3">
                    <button onClick={handleSaveConfig} className="flex-[2] py-3 bg-blue-600 text-white font-bold rounded-xl shadow-md">更新自定义修改 (非必要)</button>
                 </div>
