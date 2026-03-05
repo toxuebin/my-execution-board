@@ -1,0 +1,1049 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>地产精英 | 专属客户与项目管理系统</title>
+  
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.23.10/babel.min.js"></script>
+  <script async src="https://cdn.jsdelivr.net/npm/es-module-shims@1.8.0/dist/es-module-shims.js"></script>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "react": "https://esm.sh/react@18.2.0",
+        "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+        "firebase/app": "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js",
+        "firebase/auth": "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js",
+        "firebase/firestore": "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js",
+        "lucide-react": "https://esm.sh/lucide-react@0.344.0?bundle&external=react"
+      }
+    }
+  </script>
+  
+  <style>
+    body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", sans-serif; background-color: #f3f4f6; -webkit-tap-highlight-color: transparent; }
+    ::-webkit-scrollbar { width: 4px; height: 4px; display: none; }
+    @media (min-width: 768px) { ::-webkit-scrollbar { display: block; } }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    .dark-mode { background-color: #0f172a; color: #f1f5f9; }
+    .dark-mode ::-webkit-scrollbar-thumb { background: #334155; }
+    .glass { backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
+    .animate-shake { animation: shake 0.5s cubic-bezier(.36,.07,.19,.97) both; }
+    @keyframes shake { 10%, 90% { transform: translate3d(-1px, 0, 0); } 20%, 80% { transform: translate3d(2px, 0, 0); } 30%, 50%, 70% { transform: translate3d(-4px, 0, 0); } 40%, 60% { transform: translate3d(4px, 0, 0); } }
+    
+    /* 适配 iPhone 底部安全区 */
+    .pb-safe { padding-bottom: env(safe-area-inset-bottom, 16px); }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel" data-type="module">
+    import React, { useState, useEffect, useMemo } from 'react';
+    import { createRoot } from 'react-dom/client';
+    import { initializeApp } from 'firebase/app';
+    import { getAuth, onAuthStateChanged, signInAnonymously, signInWithCustomToken } from 'firebase/auth';
+    import { getFirestore, doc, setDoc, onSnapshot } from 'firebase/firestore';
+    import * as LucideIcons from 'lucide-react';
+    
+    const {
+      Lock, Unlock, Users, Building2, LayoutDashboard, Calendar, Search, Plus, X, 
+      Phone, MapPin, Edit, Trash2, ChevronRight, Clock, AlertCircle,
+      TrendingUp, DollarSign, Image: ImageIcon, ExternalLink, FileText,
+      Target, Briefcase, PhoneCall, Key, UploadCloud, Share2, Copy, Check, Map
+    } = LucideIcons;
+
+    // Firebase 配置
+    const userDefaultConfig = {
+      apiKey: "AIzaSyD7zuS6Ntz0KMWR9-By7frlKfzmxTUwX7s",
+      authDomain: "rizers-5d385.firebaseapp.com",
+      projectId: "rizers-5d385",
+      storageBucket: "rizers-5d385.firebasestorage.app",
+      messagingSenderId: "82696904275",
+      appId: "1:82696904275:web:2e390842674a9e0afa30a6",
+      measurementId: "G-5QWRNPHNPY"
+    };
+    const defaultSyncKey = "Qianxuebin20120903";
+
+    let storedConfig = null;
+    try { 
+      let parsed = JSON.parse(localStorage.getItem('customFirebaseConfig')); 
+      if (parsed && parsed.apiKey) storedConfig = parsed;
+    } catch(e){}
+    
+    let canvasConfig = null;
+    try {
+        if (typeof __firebase_config !== 'undefined' && __firebase_config) {
+            canvasConfig = JSON.parse(__firebase_config);
+        }
+    } catch(e) {}
+    const firebaseConfig = canvasConfig || storedConfig || userDefaultConfig;
+    
+    let firebaseApp, auth, db, appId, isCanvasEnv;
+    if (Object.keys(firebaseConfig).length > 0 && firebaseConfig.apiKey) {
+      try { 
+        firebaseApp = initializeApp(firebaseConfig); 
+        auth = getAuth(firebaseApp); 
+        db = getFirestore(firebaseApp); 
+        isCanvasEnv = typeof __app_id !== 'undefined';
+        appId = isCanvasEnv ? __app_id : 'standalone-app'; 
+      } catch (e) { console.warn("Firebase 初始化失败", e); }
+    }
+
+    const App = () => {
+      // 状态管理
+      const [isDarkMode, setIsDarkMode] = useState(() => new Date().getHours() >= 19 || new Date().getHours() < 7);
+      const [isLocked, setIsLocked] = useState(true);
+      const [pwdInput, setPwdInput] = useState('');
+      const [shake, setShake] = useState(false);
+      
+      const [activeTab, setActiveTab] = useState('dashboard');
+      
+      // 数据状态
+      const [user, setUser] = useState(null);
+      const [syncDocId, setSyncDocId] = useState(null);
+      const [loading, setLoading] = useState(true);
+      
+      const [clients, setClients] = useState([]);
+      const [projects, setProjects] = useState([]);
+
+      // UI 交互状态
+      const [searchQuery, setSearchQuery] = useState('');
+      const [selectedClient, setSelectedClient] = useState(null);
+      const [selectedProject, setSelectedProject] = useState(null);
+      const [isEditing, setIsEditing] = useState(false);
+      const [editFormData, setEditFormData] = useState({ floorPlans: [], masterPlans: [] });
+      const [isUploading, setIsUploading] = useState({ floorPlans: false, masterPlans: false });
+
+      // 分享状态
+      const [showShareModal, setShowShareModal] = useState(false);
+      const [sharePlanIndex, setSharePlanIndex] = useState(0);
+      const [copied, setCopied] = useState(false);
+
+      useEffect(() => {
+        if (isDarkMode) document.body.classList.add('dark-mode');
+        else document.body.classList.remove('dark-mode');
+      }, [isDarkMode]);
+
+      // Firebase 身份认证与同步
+      useEffect(() => {
+        let unsubscribeAuth = () => {};
+        const initAuth = async () => {
+          try {
+            if (!auth) { setLoading(false); return; }
+            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                await signInWithCustomToken(auth, __initial_auth_token);
+            } else { await signInAnonymously(auth); }
+            unsubscribeAuth = onAuthStateChanged(auth, u => { setUser(u); if (!u) setLoading(false); });
+          } catch (err) { setLoading(false); }
+        };
+        initAuth();
+        return () => unsubscribeAuth();
+      }, []);
+
+      useEffect(() => {
+        if (!user) return;
+        const initDocId = async () => {
+          try {
+              if (isCanvasEnv) { setSyncDocId(user.uid); } 
+              else {
+                 const key = localStorage.getItem('customSyncKey') || defaultSyncKey;
+                 if (window.crypto && window.crypto.subtle) {
+                     const msgBuffer = new TextEncoder().encode(key);                    
+                     const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+                     const hashHex = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+                     setSyncDocId(hashHex);
+                 } else { setSyncDocId('doc_' + btoa(encodeURIComponent(key)).replace(/[^a-zA-Z0-9]/g, '').substring(0, 30)); }
+              }
+          } catch (err) { setSyncDocId('fallback_dashboard_id'); }
+        };
+        initDocId();
+      }, [user]);
+
+      useEffect(() => {
+        if (!user || !db || !syncDocId) return;
+        const docRef = isCanvasEnv ? doc(db, 'artifacts', appId, 'users', syncDocId, 'dashboard', 'data_pro_v5') : doc(db, 'users', 'standalone', 'dashboards', syncDocId);
+        const unsubscribeSnap = onSnapshot(docRef, (snap) => {
+          if (snap.exists()) {
+            const d = snap.data();
+            if (d.clients) setClients(d.clients);
+            if (d.realEstateProjects) setProjects(d.realEstateProjects);
+          }
+          setLoading(false);
+        }, () => setLoading(false));
+        return () => unsubscribeSnap();
+      }, [user, syncDocId]);
+
+      const saveData = async (newData) => {
+        if (newData.clients !== undefined) setClients(newData.clients);
+        if (newData.realEstateProjects !== undefined) setProjects(newData.realEstateProjects);
+        if (user && db && syncDocId) {
+          try { 
+            const docRef = isCanvasEnv ? doc(db, 'artifacts', appId, 'users', syncDocId, 'dashboard', 'data_pro_v5') : doc(db, 'users', 'standalone', 'dashboards', syncDocId);
+            await setDoc(docRef, newData, { merge: true }); 
+          } catch (e) { console.warn("Cloud Sync Delayed", e); }
+        }
+      };
+
+      const handleUnlock = () => {
+        if (pwdInput === '20120903' || pwdInput === '000111') { setIsLocked(false); setPwdInput(''); } 
+        else { setShake(true); setTimeout(() => setShake(false), 500); setPwdInput(''); }
+      };
+
+      const theme = {
+        bg: isDarkMode ? 'bg-[#0f172a]' : 'bg-[#f3f4f6]',
+        card: isDarkMode ? 'bg-[#1e293b] border-[#334155]' : 'bg-white border-gray-200',
+        textMain: isDarkMode ? 'text-slate-100' : 'text-slate-900',
+        textSub: isDarkMode ? 'text-slate-400' : 'text-slate-500',
+        inputBg: isDarkMode ? 'bg-[#0f172a] border-[#334155]' : 'bg-slate-50 border-slate-200',
+        primary: 'bg-purple-600 hover:bg-purple-700 text-white',
+        primaryText: isDarkMode ? 'text-purple-400' : 'text-purple-600',
+      };
+
+      const getTodayString = () => {
+        const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      };
+
+      // === 核心逻辑：本地压缩上传 ===
+      const compressImage = (file) => {
+          return new Promise((resolve, reject) => {
+              const reader = new FileReader();
+              reader.readAsDataURL(file);
+              reader.onload = (event) => {
+                  const img = new Image();
+                  img.src = event.target.result;
+                  img.onload = () => {
+                      const canvas = document.createElement('canvas');
+                      const MAX_WIDTH = 800; // 限制宽度 800px，既高清又小
+                      let width = img.width;
+                      let height = img.height;
+
+                      if (width > MAX_WIDTH) {
+                          height = Math.round((height * MAX_WIDTH) / width);
+                          width = MAX_WIDTH;
+                      }
+                      canvas.width = width;
+                      canvas.height = height;
+
+                      const ctx = canvas.getContext('2d');
+                      ctx.drawImage(img, 0, 0, width, height);
+                      resolve(canvas.toDataURL('image/jpeg', 0.7)); // 0.7的质量，极大压缩体积
+                  };
+                  img.onerror = (err) => reject(err);
+              };
+          });
+      };
+
+      const handleImageUpload = async (e, field) => {
+          const files = Array.from(e.target.files);
+          if (files.length === 0) return;
+          
+          setIsUploading(prev => ({ ...prev, [field]: true }));
+          try {
+              const compressedImages = await Promise.all(files.map(file => compressImage(file)));
+              setEditFormData(prev => ({
+                  ...prev,
+                  [field]: [...(prev[field] || []), ...compressedImages]
+              }));
+          } catch (err) {
+              alert("图片处理失败，请重试");
+          } finally {
+              setIsUploading(prev => ({ ...prev, [field]: false }));
+          }
+      };
+
+      const removeImage = (field, indexToRemove) => {
+          setEditFormData(prev => ({
+              ...prev,
+              [field]: prev[field].filter((_, index) => index !== indexToRemove)
+          }));
+      };
+
+      // === 客户管理逻辑 ===
+      const saveClient = () => {
+        if (!editFormData.name) return alert("客户姓名必填");
+        let newClients = [...clients];
+        if (editFormData.id) {
+            newClients = newClients.map(c => c.id === editFormData.id ? { ...c, ...editFormData } : c);
+        } else {
+            newClients = [{ id: Date.now().toString(), date: getTodayString(), ...editFormData, followUps: [] }, ...newClients];
+        }
+        saveData({ clients: newClients });
+        setIsEditing(false);
+        if (editFormData.id) setSelectedClient(newClients.find(c => c.id === editFormData.id));
+      };
+
+      const addFollowUp = (clientId, text, nextRemindDays) => {
+        if (!text.trim()) return;
+        const now = new Date();
+        const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+        
+        let nextRemindDateStr = null;
+        if (nextRemindDays > 0) {
+            const remindDate = new Date(); remindDate.setDate(remindDate.getDate() + parseInt(nextRemindDays));
+            nextRemindDateStr = `${remindDate.getFullYear()}-${String(remindDate.getMonth() + 1).padStart(2, '0')}-${String(remindDate.getDate()).padStart(2, '0')}`;
+        }
+        const newRecord = { id: Date.now().toString(), date: dateStr, text, type: 'follow' };
+        
+        const updatedClients = clients.map(c => {
+            if (c.id === clientId) return { ...c, nextRemindDate: nextRemindDateStr || c.nextRemindDate, followUps: [newRecord, ...(c.followUps || [])] };
+            return c;
+        });
+        saveData({ clients: updatedClients });
+        setSelectedClient(updatedClients.find(c => c.id === clientId));
+      };
+
+      // === 楼盘库逻辑 ===
+      const saveProject = () => {
+          if (!editFormData.name) return alert("楼盘名称必填");
+          let newProjects = [...projects];
+          const projectData = { ...editFormData };
+          
+          // 确保数组存在
+          if (!projectData.floorPlans) projectData.floorPlans = [];
+          if (!projectData.masterPlans) projectData.masterPlans = [];
+
+          if (projectData.id) {
+              newProjects = newProjects.map(p => p.id === projectData.id ? projectData : p);
+          } else {
+              newProjects = [{ id: 'proj_' + Date.now().toString(), ...projectData }, ...newProjects];
+          }
+
+          saveData({ realEstateProjects: newProjects });
+          setIsEditing(false);
+          if (projectData.id) setSelectedProject(newProjects.find(p => p.id === projectData.id));
+      };
+
+      const openMap = (address) => {
+          if (!address) return alert("请先录入地址");
+          window.open(`https://map.baidu.com/search/${encodeURIComponent(address)}`, '_blank');
+      };
+
+      // === 分享逻辑 ===
+      const getShareText = () => {
+          if (!selectedProject) return "";
+          let tagsStr = (selectedProject.tags || '').split(/[,， ]/).filter(Boolean).map(t => `#${t}`).join(' ');
+          let text = `🔥【${selectedProject.name}】震撼热销中！\n\n`;
+          text += `📍 项目地址：${selectedProject.address || '来电详询'}\n`;
+          text += `💰 参考均价：${selectedProject.price || '一房一价'}\n`;
+          text += `📐 主力户型：${selectedProject.area ? selectedProject.area + ' ㎡' : '详询'}\n`;
+          if (selectedProject.totalUnits) text += `🏢 楼盘总套数：${selectedProject.totalUnits}\n`;
+          if (tagsStr) text += `\n✨ 项目亮点：\n${tagsStr}\n`;
+          
+          text += `\n👇 更多详情及绝版户型图，欢迎私信或来电咨询，预约看房专车接送！`;
+          return text;
+      };
+
+      const handleCopyShareText = () => {
+          const text = getShareText();
+          if (navigator.clipboard && window.isSecureContext) {
+              navigator.clipboard.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
+          } else {
+              let textArea = document.createElement("textarea");
+              textArea.value = text; textArea.style.position = "fixed"; document.body.appendChild(textArea);
+              textArea.focus(); textArea.select();
+              try { document.execCommand('copy'); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch (err) { alert('复制失败，请手动长按复制'); }
+              document.body.removeChild(textArea);
+          }
+      };
+
+
+      // === 计算与过滤 ===
+      const filteredClients = useMemo(() => {
+          return clients.filter(c => c.name?.includes(searchQuery) || c.phone?.includes(searchQuery) || c.intentArea?.includes(searchQuery)
+          ).sort((a, b) => { const priority = { 'S': 4, 'A': 3, 'B': 2, 'C': 1 }; return (priority[b.level] || 0) - (priority[a.level] || 0); });
+      }, [clients, searchQuery]);
+
+      const filteredProjects = useMemo(() => {
+          return projects.filter(p => p.name?.includes(searchQuery) || p.area?.includes(searchQuery) || p.tags?.includes(searchQuery));
+      }, [projects, searchQuery]);
+
+      const todaysFollowUps = useMemo(() => {
+          const today = getTodayString(); return clients.filter(c => c.nextRemindDate === today || (c.nextRemindDate && c.nextRemindDate < today));
+      }, [clients]);
+
+      // === 渲染层 ===
+      if (isLocked) {
+        return (
+          <div className={`min-h-screen flex items-center justify-center ${theme.bg} relative overflow-hidden transition-colors duration-500 px-4`}>
+             <div className="absolute inset-0 z-0 opacity-20 pointer-events-none" style={{ backgroundImage: 'radial-gradient(circle at 50% 50%, #8b5cf6 0%, transparent 50%)' }}></div>
+             <div className={`z-10 w-full max-w-md p-6 sm:p-12 rounded-[2rem] shadow-2xl ${isDarkMode ? 'bg-[#1e293b]/90 border border-[#334155]' : 'bg-white/90 border border-white'} glass flex flex-col items-center ${shake ? 'animate-shake' : ''}`}>
+                <div className={`w-16 h-16 sm:w-20 sm:h-20 rounded-full flex items-center justify-center mb-6 shadow-inner ${isDarkMode ? 'bg-[#0f172a]' : 'bg-slate-50'}`}>
+                    <Lock className="w-8 h-8 sm:w-10 sm:h-10 text-purple-500" strokeWidth={1.5} />
+                </div>
+                <h1 className={`text-xl sm:text-2xl font-black mb-2 tracking-tight ${theme.textMain}`}>房产客源管理系统</h1>
+                <p className={`text-xs sm:text-sm mb-8 font-medium ${theme.textSub}`}>机密数据，请输入访问密码</p>
+                <div className="w-full relative">
+                    <input type="password" value={pwdInput} onChange={(e) => setPwdInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleUnlock()} placeholder="解锁密码" className={`w-full px-6 py-4 rounded-xl border text-center text-lg tracking-widest outline-none transition-all focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 ${theme.inputBg} ${theme.textMain}`} />
+                </div>
+                <button onClick={handleUnlock} className={`w-full mt-6 py-4 rounded-xl font-bold shadow-lg transition-transform active:scale-95 flex items-center justify-center gap-2 ${theme.primary}`}>
+                    <Unlock className="w-5 h-5" /> 立即解锁
+                </button>
+             </div>
+          </div>
+        );
+      }
+
+      const renderDashboard = () => (
+          <div className="space-y-4 sm:space-y-6 animate-in fade-in duration-500 pb-20 md:pb-6">
+              <h2 className={`text-xl sm:text-2xl font-black tracking-tight ${theme.textMain}`}>工作台</h2>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
+                  <div className={`p-4 sm:p-5 rounded-2xl border ${theme.card} shadow-sm`}>
+                      <div className={`text-xs sm:text-sm font-bold flex items-center gap-1 sm:gap-2 ${theme.textSub}`}><Users className="w-4 h-4 text-blue-500"/> 总客户数</div>
+                      <div className={`text-2xl sm:text-3xl font-black mt-2 font-mono ${theme.textMain}`}>{clients.length}</div>
+                  </div>
+                  <div className={`p-4 sm:p-5 rounded-2xl border ${theme.card} shadow-sm`}>
+                      <div className={`text-xs sm:text-sm font-bold flex items-center gap-1 sm:gap-2 ${theme.textSub}`}><Target className="w-4 h-4 text-yellow-500"/> S级客户</div>
+                      <div className={`text-2xl sm:text-3xl font-black mt-2 font-mono ${theme.textMain}`}>{clients.filter(c=>c.level==='S').length}</div>
+                  </div>
+                  <div className={`p-4 sm:p-5 rounded-2xl border ${theme.card} shadow-sm`}>
+                      <div className={`text-xs sm:text-sm font-bold flex items-center gap-1 sm:gap-2 ${theme.textSub}`}><Building2 className="w-4 h-4 text-purple-500"/> 录入楼盘</div>
+                      <div className={`text-2xl sm:text-3xl font-black mt-2 font-mono ${theme.textMain}`}>{projects.length}</div>
+                  </div>
+                  <div className={`p-4 sm:p-5 rounded-2xl border ${theme.card} shadow-sm`}>
+                      <div className={`text-xs sm:text-sm font-bold flex items-center gap-1 sm:gap-2 ${theme.textSub}`}><Clock className="w-4 h-4 text-red-500"/> 今日待办</div>
+                      <div className={`text-2xl sm:text-3xl font-black mt-2 font-mono text-red-500`}>{todaysFollowUps.length}</div>
+                  </div>
+              </div>
+
+              <div className={`rounded-2xl border ${theme.card} shadow-sm overflow-hidden`}>
+                  <div className={`p-3 sm:p-4 border-b flex items-center gap-2 ${isDarkMode ? 'border-[#334155]' : 'border-gray-100'}`}>
+                      <AlertCircle className="w-5 h-5 text-red-500" />
+                      <h3 className={`font-bold text-sm sm:text-base ${theme.textMain}`}>今日需跟进/回访客源</h3>
+                  </div>
+                  <div className="divide-y divide-gray-100 dark:divide-[#334155]">
+                      {todaysFollowUps.length === 0 ? (
+                          <div className={`p-8 text-center text-xs sm:text-sm ${theme.textSub}`}>今日暂无需要跟进的客户，主动出击去开发吧！</div>
+                      ) : (
+                          todaysFollowUps.map(client => (
+                              <div key={client.id} className={`p-3 sm:p-4 flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer`} onClick={() => { setActiveTab('clients'); setSelectedClient(client); }}>
+                                  <div className="flex flex-col gap-1">
+                                      <div className="flex items-center gap-2">
+                                          <span className={`font-bold text-sm sm:text-base ${theme.textMain}`}>{client.name}</span>
+                                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold text-white ${client.level === 'S' ? 'bg-yellow-500' : client.level === 'A' ? 'bg-red-500' : 'bg-blue-500'}`}>{client.level}级</span>
+                                      </div>
+                                      <div className={`text-[10px] sm:text-xs flex items-center gap-3 ${theme.textSub}`}>
+                                          <span className="flex items-center gap-1"><Phone className="w-3 h-3"/> {client.phone || '无电话'}</span>
+                                          {client.intentArea && <span className="flex items-center gap-1"><MapPin className="w-3 h-3"/> {client.intentArea}</span>}
+                                      </div>
+                                  </div>
+                                  <ChevronRight className={`w-4 h-4 sm:w-5 sm:h-5 ${theme.textSub}`} />
+                              </div>
+                          ))
+                      )}
+                  </div>
+              </div>
+          </div>
+      );
+
+      const renderClients = () => (
+          <div className="h-full flex flex-col animate-in fade-in duration-300 relative pb-20 md:pb-6">
+              {!selectedClient && !isEditing ? (
+                  <>
+                      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 sm:gap-4 mb-4 sm:mb-6">
+                          <h2 className={`text-xl sm:text-2xl font-black tracking-tight ${theme.textMain}`}>客户池</h2>
+                          <div className="flex flex-col sm:flex-row items-center gap-2 sm:gap-3 w-full sm:w-auto">
+                              <div className="relative w-full sm:w-64">
+                                  <Search className={`w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 ${theme.textSub}`} />
+                                  <input type="text" placeholder="搜索姓名/电话/区域..." value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} className={`w-full pl-9 pr-4 py-2.5 rounded-xl border text-sm outline-none ${theme.inputBg} ${theme.textMain}`} />
+                              </div>
+                              <button onClick={() => { setEditFormData({ level: 'B', type: '刚需' }); setIsEditing(true); }} className={`w-full sm:w-auto px-4 py-2.5 rounded-xl font-bold flex items-center justify-center gap-2 shadow-md transition-transform active:scale-95 ${theme.primary}`}>
+                                  <Plus className="w-4 h-4" /> 新增录入
+                              </button>
+                          </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-4 overflow-y-auto">
+                          {filteredClients.map(client => (
+                              <div key={client.id} onClick={() => setSelectedClient(client)} className={`p-4 sm:p-5 rounded-2xl border ${theme.card} shadow-sm cursor-pointer hover:shadow-md transition-all hover:-translate-y-1 group`}>
+                                  <div className="flex justify-between items-start mb-3">
+                                      <div className="flex items-center gap-3">
+                                          <div className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center text-base sm:text-lg font-black text-white shadow-inner ${client.level === 'S' ? 'bg-gradient-to-br from-yellow-400 to-orange-500' : client.level === 'A' ? 'bg-gradient-to-br from-red-400 to-rose-600' : 'bg-gradient-to-br from-blue-400 to-indigo-600'}`}>
+                                              {client.level}
+                                          </div>
+                                          <div>
+                                              <h3 className={`text-base sm:text-lg font-bold ${theme.textMain}`}>{client.name}</h3>
+                                              <div className={`text-[10px] sm:text-xs mt-0.5 flex items-center gap-1 ${theme.textSub}`}><Phone className="w-3 h-3"/> {client.phone || '未留存'}</div>
+                                          </div>
+                                      </div>
+                                  </div>
+                                  <div className={`grid grid-cols-2 gap-y-2 text-[10px] sm:text-xs mt-3 sm:mt-4 p-2.5 sm:p-3 rounded-xl ${isDarkMode ? 'bg-[#0f172a]' : 'bg-slate-50'}`}>
+                                      <div className="flex flex-col"><span className={theme.textSub}>意向区域</span><span className={`font-bold truncate ${theme.textMain}`}>{client.intentArea || '--'}</span></div>
+                                      <div className="flex flex-col"><span className={theme.textSub}>预算(万)</span><span className={`font-bold font-mono text-orange-500`}>{client.budget || '--'}</span></div>
+                                      <div className="flex flex-col"><span className={theme.textSub}>购房目的</span><span className={`font-bold ${theme.textMain}`}>{client.type || '--'}</span></div>
+                                      <div className="flex flex-col"><span className={theme.textSub}>下次跟进</span><span className={`font-bold ${client.nextRemindDate && client.nextRemindDate <= getTodayString() ? 'text-red-500' : theme.textMain}`}>{client.nextRemindDate || '未设置'}</span></div>
+                                  </div>
+                              </div>
+                          ))}
+                      </div>
+                  </>
+              ) : isEditing ? (
+                  <div className={`max-w-2xl mx-auto w-full p-4 sm:p-8 rounded-[2rem] border ${theme.card} shadow-xl animate-in slide-in-from-bottom-4`}>
+                      <div className="flex justify-between items-center mb-4 sm:mb-6">
+                          <h2 className={`text-lg sm:text-xl font-black ${theme.textMain}`}>{editFormData.id ? '编辑客户资料' : '新增客资'}</h2>
+                          <button onClick={() => setIsEditing(false)} className={`p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 ${theme.textSub}`}><X className="w-5 h-5"/></button>
+                      </div>
+                      <div className="space-y-4">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                              <div>
+                                  <label className={`block text-xs font-bold mb-1.5 ${theme.textSub}`}>客户姓名 *</label>
+                                  <input type="text" value={editFormData.name || ''} onChange={e=>setEditFormData({...editFormData, name: e.target.value})} className={`w-full p-3 rounded-xl border text-sm ${theme.inputBg} ${theme.textMain}`} />
+                              </div>
+                              <div>
+                                  <label className={`block text-xs font-bold mb-1.5 ${theme.textSub}`}>联系电话</label>
+                                  <input type="tel" value={editFormData.phone || ''} onChange={e=>setEditFormData({...editFormData, phone: e.target.value})} className={`w-full p-3 rounded-xl border text-sm ${theme.inputBg} ${theme.textMain}`} />
+                              </div>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                              <div>
+                                  <label className={`block text-xs font-bold mb-1.5 ${theme.textSub}`}>意向等级</label>
+                                  <select value={editFormData.level || 'B'} onChange={e=>setEditFormData({...editFormData, level: e.target.value})} className={`w-full p-3 rounded-xl border text-sm ${theme.inputBg} ${theme.textMain}`}>
+                                      <option value="S">S级 (准客/逼定)</option><option value="A">A级 (高意向/常看房)</option><option value="B">B级 (观望/需培育)</option><option value="C">C级 (死客/无效)</option>
+                                  </select>
+                              </div>
+                              <div>
+                                  <label className={`block text-xs font-bold mb-1.5 ${theme.textSub}`}>购房目的</label>
+                                  <select value={editFormData.type || '刚需'} onChange={e=>setEditFormData({...editFormData, type: e.target.value})} className={`w-full p-3 rounded-xl border text-sm ${theme.inputBg} ${theme.textMain}`}>
+                                      <option value="刚需">刚需上车</option><option value="改善">改善置换</option><option value="投资">纯投资</option><option value="学区">学区落户</option>
+                                  </select>
+                              </div>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                              <div>
+                                  <label className={`block text-xs font-bold mb-1.5 ${theme.textSub}`}>购房预算 (万)</label>
+                                  <input type="text" placeholder="例: 首付50或总价200" value={editFormData.budget || ''} onChange={e=>setEditFormData({...editFormData, budget: e.target.value})} className={`w-full p-3 rounded-xl border text-sm ${theme.inputBg} ${theme.textMain}`} />
+                              </div>
+                              <div>
+                                  <label className={`block text-xs font-bold mb-1.5 ${theme.textSub}`}>意向板块/区域</label>
+                                  <input type="text" placeholder="例: 南湖区/科技城" value={editFormData.intentArea || ''} onChange={e=>setEditFormData({...editFormData, intentArea: e.target.value})} className={`w-full p-3 rounded-xl border text-sm ${theme.inputBg} ${theme.textMain}`} />
+                              </div>
+                          </div>
+                          <div>
+                              <label className={`block text-xs font-bold mb-1.5 ${theme.textSub}`}>核心诉求/痛点备注</label>
+                              <textarea rows="3" value={editFormData.requirement || ''} onChange={e=>setEditFormData({...editFormData, requirement: e.target.value})} className={`w-full p-3 rounded-xl border resize-none text-sm ${theme.inputBg} ${theme.textMain}`} placeholder="例如：必须带学区、不要顶底楼..."></textarea>
+                          </div>
+                          <button onClick={saveClient} className={`w-full py-3.5 rounded-xl font-bold mt-2 shadow-lg active:scale-95 transition-transform ${theme.primary}`}>保存资料</button>
+                      </div>
+                  </div>
+              ) : (
+                  <div className="flex flex-col lg:flex-row gap-4 sm:gap-6 h-full">
+                      {/* 左侧详情卡片 */}
+                      <div className="w-full lg:w-1/3 space-y-4">
+                          <button onClick={() => setSelectedClient(null)} className={`flex items-center gap-1 text-sm font-bold hover:underline mb-1 ${theme.primaryText}`}>
+                              <ChevronRight className="w-4 h-4 rotate-180" /> 返回客源库
+                          </button>
+                          <div className={`p-5 sm:p-6 rounded-[2rem] border ${theme.card} shadow-lg relative overflow-hidden`}>
+                              <div className="absolute top-0 right-0 p-4 opacity-10"><Users className="w-20 h-20 sm:w-24 sm:h-24" /></div>
+                              <div className="relative z-10">
+                                  <div className="flex justify-between items-start">
+                                      <div>
+                                          <h2 className={`text-2xl sm:text-3xl font-black tracking-tight ${theme.textMain}`}>{selectedClient.name}</h2>
+                                          <div className={`mt-2 inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] sm:text-xs font-bold text-white shadow-sm ${selectedClient.level === 'S' ? 'bg-yellow-500' : selectedClient.level === 'A' ? 'bg-red-500' : 'bg-blue-500'}`}>
+                                              {selectedClient.level}级意向
+                                          </div>
+                                      </div>
+                                      <button onClick={() => { setEditFormData(selectedClient); setIsEditing(true); }} className={`p-2 sm:p-2.5 rounded-xl border bg-white dark:bg-slate-800 shadow-sm text-blue-500 hover:scale-105 transition-transform`}>
+                                          <Edit className="w-4 h-4 sm:w-5 sm:h-5" />
+                                      </button>
+                                  </div>
+
+                                  <div className="mt-6 sm:mt-8 space-y-3 sm:space-y-4">
+                                      <div className="flex items-center gap-3">
+                                          <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center text-green-500"><Phone className="w-4 h-4 sm:w-5 sm:h-5"/></div>
+                                          <div>
+                                              <p className={`text-[9px] sm:text-[10px] font-bold uppercase tracking-widest ${theme.textSub}`}>联系电话</p>
+                                              <p className={`font-bold text-base sm:text-lg font-mono ${theme.textMain}`}>{selectedClient.phone || '--'}</p>
+                                          </div>
+                                      </div>
+                                      <div className="flex items-center gap-3">
+                                          <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-orange-100 dark:bg-orange-900/30 flex items-center justify-center text-orange-500"><DollarSign className="w-4 h-4 sm:w-5 sm:h-5"/></div>
+                                          <div>
+                                              <p className={`text-[9px] sm:text-[10px] font-bold uppercase tracking-widest ${theme.textSub}`}>购房预算</p>
+                                              <p className={`font-bold text-sm sm:text-base ${theme.textMain}`}>{selectedClient.budget || '未透露'}</p>
+                                          </div>
+                                      </div>
+                                      <div className="flex items-center gap-3">
+                                          <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center text-blue-500"><MapPin className="w-4 h-4 sm:w-5 sm:h-5"/></div>
+                                          <div>
+                                              <p className={`text-[9px] sm:text-[10px] font-bold uppercase tracking-widest ${theme.textSub}`}>意向区域/板块</p>
+                                              <p className={`font-bold text-sm sm:text-base ${theme.textMain}`}>{selectedClient.intentArea || '全城看'}</p>
+                                          </div>
+                                      </div>
+                                  </div>
+                                  {selectedClient.requirement && (
+                                      <div className={`mt-5 sm:mt-6 p-3 sm:p-4 rounded-xl text-xs sm:text-sm ${isDarkMode ? 'bg-[#0f172a]' : 'bg-slate-50'} ${theme.textMain}`}>
+                                          <span className="font-bold block mb-1">核心诉求:</span> {selectedClient.requirement}
+                                      </div>
+                                  )}
+                              </div>
+                          </div>
+                      </div>
+
+                      {/* 右侧跟进时间轴 */}
+                      <div className="w-full lg:w-2/3 flex flex-col h-[500px] lg:h-full">
+                          <div className={`flex-1 rounded-[2rem] border ${theme.card} shadow-lg flex flex-col overflow-hidden`}>
+                              <div className={`p-4 sm:p-5 border-b flex items-center gap-2 ${isDarkMode ? 'border-[#334155]' : 'border-gray-100'}`}>
+                                  <TrendingUp className="w-5 h-5 text-purple-500" />
+                                  <h3 className={`text-base sm:text-lg font-bold ${theme.textMain}`}>跟进时间轴</h3>
+                              </div>
+                              <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 sm:space-y-6">
+                                  {(!selectedClient.followUps || selectedClient.followUps.length === 0) ? (
+                                      <div className="h-full flex flex-col items-center justify-center text-slate-400 text-xs sm:text-sm">
+                                          <PhoneCall className="w-10 h-10 mb-2 sm:mb-3 opacity-20" />
+                                          <p>暂无跟进记录，快去联系客户吧！</p>
+                                      </div>
+                                  ) : (
+                                      selectedClient.followUps.map((fu, idx) => (
+                                          <div key={fu.id || idx} className="relative pl-5 sm:pl-6 border-l-2 border-purple-200 dark:border-purple-900/50 pb-2 last:pb-0">
+                                              <div className="absolute -left-[9px] top-0 w-4 h-4 rounded-full bg-purple-500 border-4 border-white dark:border-[#1e293b]"></div>
+                                              <div className={`text-[10px] sm:text-xs font-mono font-bold mb-1 ${theme.textSub}`}>{fu.date}</div>
+                                              <div className={`p-3 sm:p-4 rounded-xl rounded-tl-none ${isDarkMode ? 'bg-[#0f172a]' : 'bg-slate-50'} ${theme.textMain} text-xs sm:text-sm leading-relaxed whitespace-pre-wrap`}>
+                                                  {fu.text}
+                                              </div>
+                                          </div>
+                                      ))
+                                  )}
+                              </div>
+                              <div className={`p-3 sm:p-4 border-t ${isDarkMode ? 'border-[#334155] bg-[#1e293b]' : 'border-gray-100 bg-white'}`}>
+                                  <form onSubmit={(e) => { e.preventDefault(); const t = e.target.text.value; const d = e.target.days.value; addFollowUp(selectedClient.id, t, d); e.target.text.value=''; e.target.days.value='0'; }} className="flex flex-col gap-2 sm:gap-3">
+                                      <textarea name="text" rows="2" placeholder="记录本次通话/带看详情..." className={`w-full p-2.5 sm:p-3 rounded-xl border resize-none text-xs sm:text-sm outline-none focus:border-purple-500 ${theme.inputBg} ${theme.textMain}`} required></textarea>
+                                      <div className="flex flex-col sm:flex-row items-center gap-2 sm:gap-3">
+                                          <div className={`flex items-center gap-2 px-3 py-2 rounded-xl border w-full sm:w-auto sm:flex-1 ${theme.inputBg}`}>
+                                              <Calendar className={`w-4 h-4 shrink-0 ${theme.textSub}`} />
+                                              <span className={`text-[10px] sm:text-xs font-bold ${theme.textSub} shrink-0`}>下次提醒</span>
+                                              <select name="days" className={`bg-transparent text-xs sm:text-sm font-bold outline-none w-full ${theme.textMain}`}>
+                                                  <option value="0">不提醒</option><option value="1">明天</option><option value="3">3天后</option><option value="7">1周后</option><option value="15">半个月后</option>
+                                              </select>
+                                          </div>
+                                          <button type="submit" className={`w-full sm:w-auto px-6 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2 shadow-md ${theme.primary}`}>
+                                              <Plus className="w-4 h-4" /> 记录
+                                          </button>
+                                      </div>
+                                  </form>
+                              </div>
+                          </div>
+                      </div>
+                  </div>
+              )}
+          </div>
+      );
+
+      const renderProjects = () => (
+          <div className="h-full flex flex-col animate-in fade-in duration-300 relative pb-20 md:pb-6">
+              {!selectedProject && !isEditing ? (
+                  <>
+                      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 sm:gap-4 mb-4 sm:mb-6">
+                          <h2 className={`text-xl sm:text-2xl font-black tracking-tight ${theme.textMain}`}>新盘字典</h2>
+                          <div className="flex flex-col sm:flex-row items-center gap-2 sm:gap-3 w-full sm:w-auto">
+                              <div className="relative w-full sm:w-64">
+                                  <Search className={`w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 ${theme.textSub}`} />
+                                  <input type="text" placeholder="搜索楼盘名/区域..." value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} className={`w-full pl-9 pr-4 py-2.5 rounded-xl border text-sm outline-none ${theme.inputBg} ${theme.textMain}`} />
+                              </div>
+                              <button onClick={() => { setEditFormData({ floorPlans: [], masterPlans: [] }); setIsEditing(true); }} className={`w-full sm:w-auto px-4 py-2.5 rounded-xl font-bold flex items-center justify-center gap-2 shadow-md transition-transform active:scale-95 bg-indigo-600 hover:bg-indigo-700 text-white`}>
+                                  <Plus className="w-4 h-4" /> 录入新盘
+                              </button>
+                          </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-5 overflow-y-auto">
+                          {filteredProjects.map(proj => (
+                              <div key={proj.id} onClick={() => setSelectedProject(proj)} className={`rounded-2xl border ${theme.card} shadow-sm cursor-pointer hover:shadow-xl transition-all hover:-translate-y-1 overflow-hidden group flex flex-col`}>
+                                  <div className={`h-36 sm:h-40 relative flex items-center justify-center overflow-hidden ${isDarkMode ? 'bg-[#0f172a]' : 'bg-slate-100'}`}>
+                                      {proj.masterPlans && proj.masterPlans[0] ? (
+                                           <img src={proj.masterPlans[0]} alt="总平图" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" />
+                                      ) : proj.floorPlans && proj.floorPlans[0] ? (
+                                          <img src={proj.floorPlans[0]} alt="封面" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" />
+                                      ) : (
+                                          <Building2 className={`w-10 h-10 sm:w-12 sm:h-12 ${theme.textSub} opacity-50`} />
+                                      )}
+                                      <div className="absolute top-2 right-2 bg-black/60 backdrop-blur-md text-white px-2 py-1 rounded text-[10px] sm:text-xs font-bold font-mono">
+                                          总套数 {proj.totalUnits || '--'}
+                                      </div>
+                                  </div>
+                                  <div className="p-4 sm:p-5 flex-1 flex flex-col">
+                                      <h3 className={`text-lg sm:text-xl font-black mb-1 truncate ${theme.textMain}`}>{proj.name}</h3>
+                                      <div className={`text-[10px] sm:text-xs flex items-center gap-1 mb-3 ${theme.textSub} truncate`}><MapPin className="w-3 h-3 shrink-0"/> {proj.address || '地址未录入'}</div>
+                                      
+                                      <div className="grid grid-cols-2 gap-3 sm:gap-4 mb-3 sm:mb-4">
+                                          <div>
+                                              <p className={`text-[9px] sm:text-[10px] font-bold uppercase tracking-widest ${theme.textSub}`}>均价/单价</p>
+                                              <p className="font-bold text-red-500 font-mono text-sm sm:text-base">{proj.price || '待定'}</p>
+                                          </div>
+                                          <div>
+                                              <p className={`text-[9px] sm:text-[10px] font-bold uppercase tracking-widest ${theme.textSub}`}>主力面积段</p>
+                                              <p className={`font-bold font-mono text-sm sm:text-base ${theme.textMain}`}>{proj.area || '--'}㎡</p>
+                                          </div>
+                                      </div>
+                                      <div className="mt-auto flex gap-1 flex-wrap">
+                                          {(proj.tags || '').split(/[,， ]/).filter(Boolean).slice(0, 3).map((tag, i) => (
+                                              <span key={i} className={`px-2 py-0.5 rounded text-[9px] sm:text-[10px] font-bold bg-indigo-100 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400`}>{tag}</span>
+                                          ))}
+                                      </div>
+                                  </div>
+                              </div>
+                          ))}
+                      </div>
+                  </>
+              ) : isEditing ? (
+                  <div className={`max-w-3xl mx-auto w-full p-4 sm:p-8 rounded-[2rem] border ${theme.card} shadow-xl animate-in slide-in-from-bottom-4`}>
+                      <div className="flex justify-between items-center mb-4 sm:mb-6">
+                          <h2 className={`text-lg sm:text-xl font-black ${theme.textMain}`}>{editFormData.id ? '编辑楼盘信息' : '录入新盘'}</h2>
+                          <button onClick={() => setIsEditing(false)} className={`p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 ${theme.textSub}`}><X className="w-5 h-5"/></button>
+                      </div>
+                      <div className="space-y-4 sm:space-y-5">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-5">
+                              <div>
+                                  <label className={`block text-xs font-bold mb-1.5 ${theme.textSub}`}>楼盘名称 *</label>
+                                  <input type="text" value={editFormData.name || ''} onChange={e=>setEditFormData({...editFormData, name: e.target.value})} className={`w-full p-3 rounded-xl border text-sm ${theme.inputBg} ${theme.textMain}`} />
+                              </div>
+                              <div>
+                                  <label className={`block text-xs font-bold mb-1.5 ${theme.textSub}`}>项目地址</label>
+                                  <input type="text" placeholder="录入后可一键打开地图" value={editFormData.address || ''} onChange={e=>setEditFormData({...editFormData, address: e.target.value})} className={`w-full p-3 rounded-xl border text-sm ${theme.inputBg} ${theme.textMain}`} />
+                              </div>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-5">
+                              <div>
+                                  <label className={`block text-xs font-bold mb-1.5 ${theme.textSub}`}>均价 (元/㎡)</label>
+                                  <input type="text" value={editFormData.price || ''} onChange={e=>setEditFormData({...editFormData, price: e.target.value})} className={`w-full p-3 rounded-xl border text-sm ${theme.inputBg} ${theme.textMain}`} />
+                              </div>
+                              <div>
+                                  <label className={`block text-xs font-bold mb-1.5 ${theme.textSub}`}>主力面积 (㎡)</label>
+                                  <input type="text" placeholder="例: 89-120" value={editFormData.area || ''} onChange={e=>setEditFormData({...editFormData, area: e.target.value})} className={`w-full p-3 rounded-xl border text-sm ${theme.inputBg} ${theme.textMain}`} />
+                              </div>
+                              <div>
+                                  <label className={`block text-xs font-bold mb-1.5 ${theme.textSub}`}>楼盘总套数</label>
+                                  <input type="number" placeholder="例: 800" value={editFormData.totalUnits || ''} onChange={e=>setEditFormData({...editFormData, totalUnits: e.target.value})} className={`w-full p-3 rounded-xl border text-sm ${theme.inputBg} text-indigo-500 font-bold`} />
+                              </div>
+                          </div>
+                          <div>
+                              <label className={`block text-xs font-bold mb-1.5 ${theme.textSub}`}>核心卖点标签 (用空格或逗号隔开)</label>
+                              <input type="text" placeholder="例: 学区房 近地铁 核心区 现房" value={editFormData.tags || ''} onChange={e=>setEditFormData({...editFormData, tags: e.target.value})} className={`w-full p-3 rounded-xl border text-sm ${theme.inputBg} ${theme.textMain}`} />
+                          </div>
+                          <div>
+                              <label className={`block text-xs font-bold mb-1.5 ${theme.textSub}`}>内部销讲词 / 优劣势备注 (不对客户展示)</label>
+                              <textarea rows="3" value={editFormData.sellingPoints || ''} onChange={e=>setEditFormData({...editFormData, sellingPoints: e.target.value})} className={`w-full p-3 rounded-xl border resize-none text-sm ${theme.inputBg} ${theme.textMain}`} placeholder="记录楼盘劣势的话术、渠道保护期等..."></textarea>
+                          </div>
+                          
+                          {/* 分离的图片上传区 */}
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              {/* 总平图上传 */}
+                              <div className={`p-4 rounded-xl border ${isDarkMode ? 'bg-[#0f172a] border-[#334155]' : 'bg-slate-50 border-gray-200'}`}>
+                                  <label className={`block text-xs sm:text-sm font-bold flex items-center gap-1.5 mb-1 ${theme.textMain}`}>
+                                      <Map className="w-4 h-4 text-emerald-500"/> 总平图 / 鸟瞰图
+                                  </label>
+                                  <p className={`text-[10px] mb-3 ${theme.textSub}`}>支持点击/拖拽，自动极速压缩。</p>
+                                  <div className="flex flex-wrap gap-3">
+                                      {(editFormData.masterPlans || []).map((imgUrl, idx) => (
+                                          <div key={idx} className="relative w-16 h-16 sm:w-20 sm:h-20 rounded-lg overflow-hidden border border-gray-300 group shadow-sm">
+                                              <img src={imgUrl} className="w-full h-full object-cover" alt="总平图" />
+                                              <button onClick={() => removeImage('masterPlans', idx)} className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"><X className="w-3 h-3" /></button>
+                                          </div>
+                                      ))}
+                                      <div className="relative w-16 h-16 sm:w-20 sm:h-20 rounded-lg border-2 border-dashed border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-900/20 flex flex-col items-center justify-center cursor-pointer hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors">
+                                          <input type="file" multiple accept="image/*" onChange={(e) => handleImageUpload(e, 'masterPlans')} disabled={isUploading.masterPlans} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
+                                          {isUploading.masterPlans ? <LucideIcons.Loader2 className="w-5 h-5 text-emerald-500 animate-spin" /> : <><UploadCloud className="w-5 h-5 text-emerald-500 mb-0.5" /><span className="text-[9px] text-emerald-600 dark:text-emerald-400 font-bold">上传图片</span></>}
+                                      </div>
+                                  </div>
+                              </div>
+
+                              {/* 户型图上传 */}
+                              <div className={`p-4 rounded-xl border ${isDarkMode ? 'bg-[#0f172a] border-[#334155]' : 'bg-slate-50 border-gray-200'}`}>
+                                  <label className={`block text-xs sm:text-sm font-bold flex items-center gap-1.5 mb-1 ${theme.textMain}`}>
+                                      <ImageIcon className="w-4 h-4 text-indigo-500"/> 主力户型图册
+                                  </label>
+                                  <p className={`text-[10px] mb-3 ${theme.textSub}`}>支持多张图同时选择，自动极速压缩。</p>
+                                  <div className="flex flex-wrap gap-3">
+                                      {(editFormData.floorPlans || []).map((imgUrl, idx) => (
+                                          <div key={idx} className="relative w-16 h-16 sm:w-20 sm:h-20 rounded-lg overflow-hidden border border-gray-300 group shadow-sm">
+                                              <img src={imgUrl} className="w-full h-full object-cover" alt="户型图" />
+                                              <button onClick={() => removeImage('floorPlans', idx)} className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"><X className="w-3 h-3" /></button>
+                                          </div>
+                                      ))}
+                                      <div className="relative w-16 h-16 sm:w-20 sm:h-20 rounded-lg border-2 border-dashed border-indigo-300 dark:border-indigo-700 bg-indigo-50 dark:bg-indigo-900/20 flex flex-col items-center justify-center cursor-pointer hover:bg-indigo-100 dark:hover:bg-indigo-900/40 transition-colors">
+                                          <input type="file" multiple accept="image/*" onChange={(e) => handleImageUpload(e, 'floorPlans')} disabled={isUploading.floorPlans} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
+                                          {isUploading.floorPlans ? <LucideIcons.Loader2 className="w-5 h-5 text-indigo-500 animate-spin" /> : <><UploadCloud className="w-5 h-5 text-indigo-500 mb-0.5" /><span className="text-[9px] text-indigo-600 dark:text-indigo-400 font-bold">上传户型</span></>}
+                                      </div>
+                                  </div>
+                              </div>
+                          </div>
+
+                          <button onClick={saveProject} className={`w-full py-3.5 sm:py-4 rounded-xl text-sm sm:text-base font-bold mt-4 shadow-lg active:scale-95 transition-transform bg-indigo-600 hover:bg-indigo-700 text-white`}>保存楼盘档案</button>
+                      </div>
+                  </div>
+              ) : (
+                  <div className="flex flex-col h-full">
+                      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4 shrink-0">
+                          <button onClick={() => setSelectedProject(null)} className={`flex items-center gap-1 text-sm font-bold hover:underline text-indigo-500`}>
+                              <ChevronRight className="w-4 h-4 rotate-180" /> 返回字典
+                          </button>
+                          <div className="flex gap-2 w-full sm:w-auto">
+                              <button onClick={() => { setSharePlanIndex(0); setShowShareModal(true); }} className={`flex-1 sm:flex-none px-3 py-2 sm:px-4 rounded-lg text-xs sm:text-sm font-bold shadow-md bg-gradient-to-r from-green-500 to-emerald-600 text-white hover:scale-105 transition-transform flex justify-center items-center gap-1.5`}>
+                                  <Share2 className="w-4 h-4" /> 一键分享
+                              </button>
+                              <button onClick={() => { setEditFormData({ ...selectedProject, floorPlans: selectedProject.floorPlans || [], masterPlans: selectedProject.masterPlans || [] }); setIsEditing(true); }} className={`flex-1 sm:flex-none px-3 py-2 sm:px-4 rounded-lg text-xs sm:text-sm font-bold border bg-white dark:bg-slate-800 shadow-sm text-blue-500 hover:scale-105 transition-transform flex justify-center items-center`}>
+                                  编辑资料
+                              </button>
+                          </div>
+                      </div>
+                      
+                      <div className={`flex-1 rounded-[2rem] border ${theme.card} shadow-lg overflow-y-auto relative`}>
+                          <div className={`p-5 sm:p-10 border-b ${isDarkMode ? 'border-[#334155]' : 'border-gray-100'} bg-gradient-to-r from-indigo-50 to-transparent dark:from-indigo-900/10`}>
+                              <h2 className={`text-2xl sm:text-4xl font-black tracking-tight mb-2 ${theme.textMain}`}>{selectedProject.name}</h2>
+                              <div className="flex flex-wrap items-center gap-2 mt-3">
+                                  <div className={`px-2 py-1 sm:px-3 sm:py-1.5 rounded-lg flex items-center gap-1 text-xs sm:text-sm font-bold shadow-sm cursor-pointer hover:opacity-80 transition-opacity bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400`} onClick={() => openMap(selectedProject.address)}>
+                                      <MapPin className="w-3 h-3 sm:w-4 sm:h-4" /> {selectedProject.address || '暂无地址'} <ExternalLink className="w-3 h-3 opacity-50"/>
+                                  </div>
+                                  {(selectedProject.tags || '').split(/[,， ]/).filter(Boolean).map((tag, i) => (
+                                      <span key={i} className={`px-2 py-1 rounded-md text-[10px] sm:text-xs font-bold border ${isDarkMode ? 'border-indigo-500/30 text-indigo-400' : 'border-indigo-200 text-indigo-600'}`}>{tag}</span>
+                                  ))}
+                              </div>
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-5 sm:gap-6 p-5 sm:p-10">
+                              <div className="md:col-span-1 space-y-4 sm:space-y-6">
+                                  <div className={`p-4 sm:p-5 rounded-2xl border shadow-inner ${isDarkMode ? 'bg-[#0f172a] border-[#334155]' : 'bg-slate-50 border-gray-100'}`}>
+                                      <h3 className={`text-sm font-bold mb-4 flex items-center gap-2 ${theme.textMain}`}><FileText className="w-4 h-4 text-indigo-500"/> 核心指标</h3>
+                                      <div className="space-y-4">
+                                          <div>
+                                              <p className={`text-[9px] sm:text-[10px] font-bold uppercase tracking-widest ${theme.textSub}`}>参考均价</p>
+                                              <p className="font-bold text-lg sm:text-xl text-red-500 font-mono">{selectedProject.price || '--'}</p>
+                                          </div>
+                                          <div className="flex justify-between">
+                                              <div>
+                                                  <p className={`text-[9px] sm:text-[10px] font-bold uppercase tracking-widest ${theme.textSub}`}>主力户型</p>
+                                                  <p className={`font-bold font-mono text-base sm:text-lg ${theme.textMain}`}>{selectedProject.area || '--'} ㎡</p>
+                                              </div>
+                                              <div className="text-right">
+                                                  <p className={`text-[9px] sm:text-[10px] font-bold uppercase tracking-widest ${theme.textSub}`}>总套数</p>
+                                                  <p className={`font-bold font-mono text-base sm:text-lg ${theme.textMain}`}>{selectedProject.totalUnits || '--'}</p>
+                                              </div>
+                                          </div>
+                                      </div>
+                                  </div>
+                                  
+                                  {selectedProject.sellingPoints && (
+                                      <div className={`p-4 sm:p-5 rounded-2xl border ${isDarkMode ? 'border-[#334155]' : 'border-gray-200'}`}>
+                                          <h3 className={`text-sm font-bold mb-2 flex items-center gap-2 ${theme.textMain}`}><Target className="w-4 h-4 text-rose-500"/> 内部销讲与打法 (机密)</h3>
+                                          <p className={`text-xs sm:text-sm leading-relaxed whitespace-pre-wrap ${theme.textSub}`}>{selectedProject.sellingPoints}</p>
+                                      </div>
+                                  )}
+
+                                  {/* 总平图展示区 */}
+                                  {selectedProject.masterPlans && selectedProject.masterPlans.length > 0 && (
+                                      <div className="md:hidden">
+                                          <h3 className={`text-sm font-bold mb-3 flex items-center gap-2 ${theme.textMain}`}><Map className="w-4 h-4 text-emerald-500"/> 总平图</h3>
+                                          <div className="grid grid-cols-2 gap-2">
+                                              {selectedProject.masterPlans.map((url, idx) => (
+                                                  <div key={idx} className={`rounded-xl overflow-hidden border ${theme.card} aspect-video shadow-sm`}><img src={url} className="w-full h-full object-cover" /></div>
+                                              ))}
+                                          </div>
+                                      </div>
+                                  )}
+                              </div>
+
+                              <div className="md:col-span-2">
+                                  {/* 桌面端总平图展示 */}
+                                  {selectedProject.masterPlans && selectedProject.masterPlans.length > 0 && (
+                                      <div className="hidden md:block mb-8">
+                                          <h3 className={`text-base font-bold mb-4 flex items-center gap-2 ${theme.textMain}`}><Map className="w-5 h-5 text-emerald-500"/> 项目总平图 / 鸟瞰图</h3>
+                                          <div className="grid grid-cols-2 gap-4">
+                                              {selectedProject.masterPlans.map((url, idx) => (
+                                                  <div key={idx} className={`rounded-xl overflow-hidden border ${theme.card} relative aspect-video shadow-sm`}><img src={url} className="w-full h-full object-cover bg-white dark:bg-black/50" /></div>
+                                              ))}
+                                          </div>
+                                      </div>
+                                  )}
+
+                                  <div className="flex justify-between items-center mb-3 sm:mb-4 mt-4 md:mt-0">
+                                      <h3 className={`text-base sm:text-lg font-bold flex items-center gap-2 ${theme.textMain}`}><ImageIcon className="w-5 h-5 text-indigo-500"/> 主力户型图册</h3>
+                                  </div>
+                                  {(!selectedProject.floorPlans || selectedProject.floorPlans.length === 0) ? (
+                                      <div className={`h-40 sm:h-64 rounded-2xl border-2 border-dashed flex flex-col items-center justify-center ${isDarkMode ? 'border-[#334155] text-slate-500' : 'border-gray-200 text-gray-400'}`}>
+                                          <ImageIcon className="w-10 h-10 sm:w-12 sm:h-12 mb-2 opacity-20" />
+                                          <p className="text-xs sm:text-sm">暂未上传户型图</p>
+                                      </div>
+                                  ) : (
+                                      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+                                          {selectedProject.floorPlans.map((url, idx) => (
+                                              <div key={idx} className={`rounded-xl overflow-hidden border ${theme.card} relative aspect-[3/4] shadow-sm`}>
+                                                  <img src={url} alt={`户型图 ${idx+1}`} className="w-full h-full object-contain bg-white dark:bg-black/50" />
+                                              </div>
+                                          ))}
+                                      </div>
+                                  )}
+                              </div>
+                          </div>
+                      </div>
+                  </div>
+              )}
+
+              {/* 客户分享海报 模态框 */}
+              {showShareModal && selectedProject && (
+                  <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+                      <div className={`w-full max-w-2xl h-[90vh] md:h-auto flex flex-col rounded-[2rem] overflow-hidden ${isDarkMode ? 'bg-[#1e293b]' : 'bg-gray-100'} shadow-2xl`}>
+                          <div className={`p-4 flex justify-between items-center border-b ${isDarkMode ? 'border-[#334155]' : 'border-gray-200 bg-white'} shrink-0`}>
+                              <h3 className={`font-bold text-sm sm:text-base flex items-center gap-2 ${theme.textMain}`}><Share2 className="w-4 h-4 sm:w-5 sm:h-5 text-green-500"/> 生成客户专属分享</h3>
+                              <button onClick={() => setShowShareModal(false)} className={`p-1.5 rounded-full hover:bg-gray-200 dark:hover:bg-slate-700 ${theme.textSub}`}><X className="w-5 h-5"/></button>
+                          </div>
+                          
+                          <div className="flex flex-col md:flex-row flex-1 overflow-y-auto md:overflow-hidden">
+                              {/* 左侧：文案预览 */}
+                              <div className={`w-full md:w-1/2 p-4 sm:p-5 ${isDarkMode ? 'bg-[#0f172a]' : 'bg-white'}`}>
+                                  <div className="flex justify-between items-end mb-3">
+                                      <div className={`text-[10px] sm:text-xs font-bold ${theme.textSub}`}>智能生成推介文案</div>
+                                      <button onClick={handleCopyShareText} className={`px-2 py-1.5 sm:px-3 rounded-lg text-[10px] sm:text-xs font-bold flex items-center gap-1 transition-colors ${copied ? 'bg-green-100 text-green-600' : 'bg-blue-100 text-blue-600 hover:bg-blue-200'}`}>
+                                          {copied ? <Check className="w-3.5 h-3.5"/> : <Copy className="w-3.5 h-3.5"/>}
+                                          {copied ? '已复制！去微信粘贴' : '复制文案'}
+                                      </button>
+                                  </div>
+                                  <textarea readOnly value={getShareText()} className={`w-full h-40 md:h-64 p-3 sm:p-4 rounded-xl text-xs sm:text-sm leading-relaxed resize-none border-none outline-none ${isDarkMode ? 'bg-[#1e293b] text-slate-300' : 'bg-gray-50 text-gray-700'} shadow-inner`}></textarea>
+                              </div>
+                              
+                              {/* 右侧：海报预览 */}
+                              <div className="w-full md:w-1/2 p-4 sm:p-5 flex flex-col items-center bg-gray-900 border-t md:border-t-0 md:border-l border-gray-800">
+                                  <div className="text-[10px] sm:text-xs text-gray-400 mb-3 font-bold">精美推介海报（请手机长按或截图发给客户）</div>
+                                  <div id="poster-area" className="w-full max-w-[260px] sm:max-w-[280px] bg-white rounded-xl overflow-hidden shadow-2xl relative">
+                                      {/* 顶部图片 */}
+                                      <div className="h-40 sm:h-48 bg-gray-100 relative">
+                                          {(selectedProject.floorPlans && selectedProject.floorPlans.length > 0) ? (
+                                              <img src={selectedProject.floorPlans[sharePlanIndex]} className="w-full h-full object-cover" alt="户型图"/>
+                                          ) : (selectedProject.masterPlans && selectedProject.masterPlans.length > 0) ? (
+                                              <img src={selectedProject.masterPlans[0]} className="w-full h-full object-cover" alt="总平图"/>
+                                          ) : (
+                                              <div className="w-full h-full flex items-center justify-center text-gray-400"><Building2 className="w-10 h-10 opacity-30"/></div>
+                                          )}
+                                          <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-3 pt-8">
+                                              <h2 className="text-white font-black text-lg sm:text-xl leading-tight">{selectedProject.name}</h2>
+                                          </div>
+                                      </div>
+                                      {/* 核心信息 */}
+                                      <div className="p-3 sm:p-4">
+                                          <div className="flex justify-between items-baseline border-b border-gray-100 pb-2 mb-2">
+                                              <div className="text-[10px] sm:text-xs text-gray-500 font-bold">参考均价</div>
+                                              <div className="text-red-500 font-black text-base sm:text-lg font-mono">{selectedProject.price || '一房一价'}</div>
+                                          </div>
+                                          <div className="flex justify-between items-baseline border-b border-gray-100 pb-2 mb-3">
+                                              <div className="text-[10px] sm:text-xs text-gray-500 font-bold">建面约</div>
+                                              <div className="text-gray-800 font-black font-mono">{selectedProject.area ? `${selectedProject.area}㎡` : '详询'}</div>
+                                          </div>
+                                          <div className="flex flex-wrap gap-1 mb-2">
+                                              {(selectedProject.tags || '').split(/[,， ]/).filter(Boolean).slice(0, 4).map((t, i) => (
+                                                  <span key={i} className="px-1.5 py-0.5 bg-gray-100 text-gray-600 text-[8px] sm:text-[9px] rounded font-bold">{t}</span>
+                                              ))}
+                                          </div>
+                                          <div className="text-[9px] sm:text-[10px] text-gray-400 flex items-center gap-1 mt-3 sm:mt-4"><MapPin className="w-3 h-3 shrink-0"/> {selectedProject.address || '联系我获取详细定位'}</div>
+                                      </div>
+                                  </div>
+
+                                  {/* 切换展示的图片 */}
+                                  {selectedProject.floorPlans && selectedProject.floorPlans.length > 1 && (
+                                      <div className="flex gap-2 mt-3 sm:mt-4 overflow-x-auto w-full max-w-[260px] sm:max-w-[280px] pb-2 hide-scroll">
+                                          {selectedProject.floorPlans.map((url, idx) => (
+                                              <div key={idx} onClick={() => setSharePlanIndex(idx)} className={`w-10 h-10 sm:w-12 sm:h-12 shrink-0 rounded border-2 cursor-pointer ${idx === sharePlanIndex ? 'border-green-500' : 'border-transparent'}`}>
+                                                  <img src={url} className="w-full h-full object-cover rounded-sm bg-white" />
+                                              </div>
+                                          ))}
+                                      </div>
+                                  )}
+                              </div>
+                          </div>
+                      </div>
+                  </div>
+              )}
+          </div>
+      );
+
+      return (
+        <div className={`min-h-screen flex flex-col md:flex-row ${theme.bg} transition-colors duration-500`}>
+          {/* 手机端顶部标题栏 */}
+          <header className={`md:hidden flex justify-between items-center p-4 border-b z-30 shrink-0 ${isDarkMode ? 'bg-[#1e293b] border-[#334155]' : 'bg-white border-gray-200 shadow-sm'}`}>
+              <div className={`flex items-center gap-2 font-black text-lg ${theme.textMain}`}>
+                  <Building2 className="w-5 h-5 text-purple-500"/> 地产精英
+              </div>
+              <div className="flex items-center gap-3">
+                  <button onClick={() => setIsDarkMode(!isDarkMode)} className={`p-1.5 rounded-lg ${isDarkMode ? 'text-yellow-400 bg-yellow-400/10' : 'text-slate-500 bg-slate-100'}`}>
+                      {isDarkMode ? <LucideIcons.Sun className="w-4 h-4" /> : <LucideIcons.Moon className="w-4 h-4" />}
+                  </button>
+                  <button onClick={() => setIsLocked(true)} className={`p-1.5 rounded-lg text-red-500 bg-red-50 dark:bg-red-500/10`}>
+                      <Key className="w-4 h-4" />
+                  </button>
+              </div>
+          </header>
+
+          {/* PC端左侧导航侧边栏 */}
+          <aside className={`hidden md:flex w-20 lg:w-64 h-screen shrink-0 border-r flex-col justify-between z-20 transition-all duration-300 ${isDarkMode ? 'bg-[#1e293b] border-[#334155]' : 'bg-white border-gray-200 shadow-[4px_0_24px_rgba(0,0,0,0.02)]'}`}>
+             <div className="p-4 lg:p-6 flex flex-col items-center lg:items-start">
+                 <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center text-white shadow-lg mb-8">
+                     <Building2 className="w-6 h-6" strokeWidth={2.5}/>
+                 </div>
+                 
+                 <nav className="w-full space-y-2 lg:space-y-3">
+                     {[
+                         { id: 'dashboard', icon: LayoutDashboard, label: '工作台' },
+                         { id: 'clients', icon: Users, label: '客户管理' },
+                         { id: 'projects', icon: MapPin, label: '楼盘字典' }
+                     ].map(item => {
+                         const Icon = item.icon;
+                         const isActive = activeTab === item.id;
+                         return (
+                             <button key={item.id} onClick={() => { setActiveTab(item.id); setSelectedClient(null); setSelectedProject(null); setIsEditing(false); setSearchQuery(''); }} className={`w-full flex items-center justify-center lg:justify-start gap-3 p-3 lg:px-4 lg:py-3.5 rounded-2xl transition-all ${isActive ? (isDarkMode ? 'bg-purple-500/20 text-purple-400' : 'bg-purple-50 text-purple-600 font-bold shadow-sm') : `text-slate-400 hover:${isDarkMode ? 'bg-slate-800' : 'bg-slate-50'}`}`}>
+                                 <Icon className="w-6 h-6 lg:w-5 lg:h-5" />
+                                 <span className="hidden lg:block text-sm">{item.label}</span>
+                             </button>
+                         )
+                     })}
+                 </nav>
+             </div>
+             
+             <div className="p-4 lg:p-6 space-y-3">
+                 <button onClick={() => setIsDarkMode(!isDarkMode)} className={`w-full flex items-center justify-center lg:justify-start gap-3 p-3 rounded-2xl text-slate-400 hover:${isDarkMode ? 'bg-slate-800' : 'bg-slate-50'} transition-all`}>
+                     {isDarkMode ? <LucideIcons.Sun className="w-6 h-6 lg:w-5 lg:h-5" /> : <LucideIcons.Moon className="w-6 h-6 lg:w-5 lg:h-5" />}
+                     <span className="hidden lg:block text-sm font-medium">{isDarkMode ? '切换日间' : '切换夜间'}</span>
+                 </button>
+                 <button onClick={() => setIsLocked(true)} className={`w-full flex items-center justify-center lg:justify-start gap-3 p-3 rounded-2xl text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all`}>
+                     <Key className="w-6 h-6 lg:w-5 lg:h-5" />
+                     <span className="hidden lg:block text-sm font-medium">锁定系统</span>
+                 </button>
+             </div>
+          </aside>
+
+          {/* 主内容区 */}
+          <main className="flex-1 h-full md:h-screen overflow-hidden flex flex-col relative z-10">
+              {loading && <div className="absolute inset-0 z-50 bg-black/10 backdrop-blur-sm flex items-center justify-center"><LucideIcons.Loader2 className="w-8 h-8 md:w-10 md:h-10 text-purple-500 animate-spin" /></div>}
+              <div className="flex-1 p-4 sm:p-6 lg:p-10 overflow-y-auto w-full max-w-[100vw]">
+                  {activeTab === 'dashboard' && renderDashboard()}
+                  {activeTab === 'clients' && renderClients()}
+                  {activeTab === 'projects' && renderProjects()}
+              </div>
+          </main>
+
+          {/* 手机端底部导航栏 */}
+          <nav className={`md:hidden fixed bottom-0 left-0 right-0 z-40 border-t flex justify-around items-center px-2 pt-2 pb-safe ${isDarkMode ? 'bg-[#1e293b]/95 border-[#334155]' : 'bg-white/95 border-gray-200'} backdrop-blur-md`}>
+              {[
+                  { id: 'dashboard', icon: LayoutDashboard, label: '工作台' },
+                  { id: 'clients', icon: Users, label: '客户管理' },
+                  { id: 'projects', icon: MapPin, label: '楼盘字典' }
+              ].map(item => {
+                  const Icon = item.icon;
+                  const isActive = activeTab === item.id;
+                  return (
+                      <button key={item.id} onClick={() => { setActiveTab(item.id); setSelectedClient(null); setSelectedProject(null); setIsEditing(false); setSearchQuery(''); }} className={`flex flex-col items-center gap-1 p-2 w-20 transition-colors ${isActive ? (isDarkMode ? 'text-purple-400' : 'text-purple-600') : 'text-slate-400'}`}>
+                          <Icon className={`w-5 h-5 ${isActive ? 'animate-bounce' : ''}`} style={{ animationIterationCount: 1 }} />
+                          <span className={`text-[10px] font-bold ${isActive ? '' : 'font-normal'}`}>{item.label}</span>
+                      </button>
+                  )
+              })}
+          </nav>
+        </div>
+      );
+    };
+
+    const root = createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
