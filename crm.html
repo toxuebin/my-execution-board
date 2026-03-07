@@ -61,7 +61,7 @@
     const {
       Lock, Unlock, Users, Building2, LayoutDashboard, Calendar, Search, Plus, X, 
       Phone, MapPin, Edit, Trash2, ChevronRight, Clock, AlertCircle,
-      TrendingUp, DollarSign, ImageIcon, ExternalLink, FileText,
+      TrendingUp, DollarSign, Image: ImageIcon, ExternalLink, FileText,
       Target, Briefcase, PhoneCall, Key, UploadCloud, Share2, Copy, Check, Map, UserCheck, DownloadCloud
     } = LucideIcons;
 
@@ -213,7 +213,7 @@
       };
 
       const handleUnlock = () => {
-        // Updated: Only 20120903 is allowed now. 000111 is removed.
+        // Updated: Only 20120903 is allowed now.
         if (pwdInput === '20120903') { setIsLocked(false); setPwdInput(''); } 
         else { setShake(true); setTimeout(() => setShake(false), 500); setPwdInput(''); }
       };
@@ -924,7 +924,7 @@
                                           </div>
                                           <div>
                                               <p className={`text-[9px] sm:text-[10px] font-bold uppercase tracking-widest ${theme.textSub}`}>主力面积段</p>
-                                              <p className={`font-bold font-mono text-sm sm:text-base ${theme.textMain}`}>{selectedProject.area || '--'} ㎡</p>
+                                              <p className={`font-bold font-mono text-sm sm:text-base ${theme.textMain}`}>{proj.area || '--'} ㎡</p>
                                           </div>
                                       </div>
                                       <div className="mt-auto flex gap-1 flex-wrap">
