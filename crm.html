@@ -37,6 +37,13 @@
     @keyframes shake { 10%, 90% { transform: translate3d(-1px, 0, 0); } 20%, 80% { transform: translate3d(2px, 0, 0); } 30%, 50%, 70% { transform: translate3d(-4px, 0, 0); } 40%, 60% { transform: translate3d(4px, 0, 0); } }
     .pb-safe { padding-bottom: env(safe-area-inset-bottom, 16px); }
     .hide-scroll::-webkit-scrollbar { display: none; }
+    input[type="date"]::-webkit-calendar-picker-indicator {
+      filter: invert(0.5);
+      cursor: pointer;
+    }
+    .dark-mode input[type="date"]::-webkit-calendar-picker-indicator {
+      filter: invert(1);
+    }
   </style>
 </head>
 <body>
@@ -54,7 +61,7 @@
     const {
       Lock, Unlock, Users, Building2, LayoutDashboard, Calendar, Search, Plus, X, 
       Phone, MapPin, Edit, Trash2, ChevronRight, Clock, AlertCircle,
-      TrendingUp, DollarSign, Image: ImageIcon, ExternalLink, FileText,
+      TrendingUp, DollarSign, ImageIcon, ExternalLink, FileText,
       Target, Briefcase, PhoneCall, Key, UploadCloud, Share2, Copy, Check, Map, UserCheck, DownloadCloud
     } = LucideIcons;
 
@@ -128,6 +135,9 @@
       const [exportAuthMode, setExportAuthMode] = useState('password'); 
       const [totpInput, setTotpInput] = useState('');
       const TOTP_SECRET = "QIANXUEBINCQM234";
+
+      // State for reminder type in the follow-up form
+      const [reminderMode, setReminderMode] = useState('preset');
 
       const totp = useMemo(() => new OTPAuth.TOTP({
           issuer: "地产精英CRM",
@@ -203,7 +213,8 @@
       };
 
       const handleUnlock = () => {
-        if (pwdInput === '20120903' || pwdInput === '000111') { setIsLocked(false); setPwdInput(''); } 
+        // Updated: Only 20120903 is allowed now. 000111 is removed.
+        if (pwdInput === '20120903') { setIsLocked(false); setPwdInput(''); } 
         else { setShake(true); setTimeout(() => setShake(false), 500); setPwdInput(''); }
       };
 
@@ -319,16 +330,24 @@
           setShowDeleteConfirm(null);
       };
 
-      const addFollowUp = (clientId, text, nextRemindDays) => {
+      const addFollowUp = (clientId, text, nextRemindInput) => {
         if (!text.trim()) return;
         const now = new Date();
         const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
         
         let nextRemindDateStr = null;
-        if (nextRemindDays > 0) {
-            const remindDate = new Date(); remindDate.setDate(remindDate.getDate() + parseInt(nextRemindDays));
+        if (nextRemindInput === '0' || !nextRemindInput) {
+            nextRemindDateStr = null;
+        } else if (nextRemindInput.includes('-')) {
+            // It's a specific date string (YYYY-MM-DD)
+            nextRemindDateStr = nextRemindInput;
+        } else {
+            // It's a preset number of days
+            const remindDate = new Date(); 
+            remindDate.setDate(remindDate.getDate() + parseInt(nextRemindInput));
             nextRemindDateStr = `${remindDate.getFullYear()}-${String(remindDate.getMonth() + 1).padStart(2, '0')}-${String(remindDate.getDate()).padStart(2, '0')}`;
         }
+        
         const newRecord = { id: Date.now().toString(), date: dateStr, text, type: 'follow' };
         
         const updatedClients = clients.map(c => {
@@ -337,6 +356,7 @@
         });
         saveData({ clients: updatedClients });
         setSelectedClient(updatedClients.find(c => c.id === clientId));
+        setReminderMode('preset'); // Reset UI state
       };
 
       const handleExportClients = (bypassPwd = false) => {
@@ -777,15 +797,52 @@
                                   )}
                               </div>
                               <div className={`p-3 sm:p-4 border-t ${isDarkMode ? 'border-[#334155] bg-[#1e293b]' : 'border-gray-100 bg-white'}`}>
-                                  <form onSubmit={(e) => { e.preventDefault(); const t = e.target.text.value; const d = e.target.days.value; addFollowUp(selectedClient.id, t, d); e.target.text.value=''; e.target.days.value='0'; }} className="flex flex-col gap-2 sm:gap-3">
+                                  <form onSubmit={(e) => { 
+                                      e.preventDefault(); 
+                                      const t = e.target.text.value; 
+                                      const remindValue = reminderMode === 'custom' ? e.target.custom_date.value : e.target.days.value;
+                                      addFollowUp(selectedClient.id, t, remindValue); 
+                                      e.target.text.value=''; 
+                                      if (e.target.days) e.target.days.value='0';
+                                      if (e.target.custom_date) e.target.custom_date.value='';
+                                  }} className="flex flex-col gap-2 sm:gap-3">
                                       <textarea name="text" rows="2" placeholder="记录本次通话/带看详情..." className={`w-full p-2.5 sm:p-3 rounded-xl border resize-none text-xs sm:text-sm outline-none focus:border-purple-500 ${theme.inputBg} ${theme.textMain}`} required></textarea>
                                       <div className="flex flex-col sm:flex-row items-center gap-2 sm:gap-3">
                                           <div className={`flex items-center gap-2 px-3 py-2 rounded-xl border w-full sm:w-auto sm:flex-1 ${theme.inputBg}`}>
                                               <Calendar className={`w-4 h-4 shrink-0 ${theme.textSub}`} />
                                               <span className={`text-[10px] sm:text-xs font-bold ${theme.textSub} shrink-0`}>下次提醒</span>
-                                              <select name="days" className={`bg-transparent text-xs sm:text-sm font-bold outline-none w-full ${theme.textMain}`}>
-                                                  <option value="0">不提醒</option><option value="1">明天</option><option value="3">3天后</option><option value="7">1周后</option><option value="15">半个月后</option>
-                                              </select>
+                                              
+                                              {reminderMode === 'preset' ? (
+                                                  <select 
+                                                      name="days" 
+                                                      onChange={(e) => e.target.value === 'custom' && setReminderMode('custom')}
+                                                      className={`bg-transparent text-xs sm:text-sm font-bold outline-none w-full ${theme.textMain}`}
+                                                  >
+                                                      <option value="0">不提醒</option>
+                                                      <option value="1">明天</option>
+                                                      <option value="3">3天后</option>
+                                                      <option value="7">1周后</option>
+                                                      <option value="15">半个月后</option>
+                                                      <option value="custom">📅 自定义日期</option>
+                                                  </select>
+                                              ) : (
+                                                  <div className="flex items-center gap-2 w-full">
+                                                      <input 
+                                                          type="date" 
+                                                          name="custom_date" 
+                                                          required
+                                                          min={getTodayString()}
+                                                          className={`bg-transparent text-xs sm:text-sm font-bold outline-none w-full ${theme.textMain}`} 
+                                                      />
+                                                      <button 
+                                                          type="button" 
+                                                          onClick={() => setReminderMode('preset')}
+                                                          className="text-[10px] text-gray-400 hover:text-purple-500 font-bold shrink-0"
+                                                      >
+                                                          取消
+                                                      </button>
+                                                  </div>
+                                              )}
                                           </div>
                                           <button type="submit" className={`w-full sm:w-auto px-6 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2 shadow-md ${theme.primary}`}>
                                               <Plus className="w-4 h-4" /> 记录
@@ -867,7 +924,7 @@
                                           </div>
                                           <div>
                                               <p className={`text-[9px] sm:text-[10px] font-bold uppercase tracking-widest ${theme.textSub}`}>主力面积段</p>
-                                              <p className={`font-bold font-mono text-sm sm:text-base ${theme.textMain}`}>{proj.area || '--'}㎡</p>
+                                              <p className={`font-bold font-mono text-sm sm:text-base ${theme.textMain}`}>{selectedProject.area || '--'} ㎡</p>
                                           </div>
                                       </div>
                                       <div className="mt-auto flex gap-1 flex-wrap">
@@ -1105,7 +1162,7 @@
                          const Icon = item.icon;
                          const isActive = activeTab === item.id;
                          return (
-                             <button key={item.id} onClick={() => { setActiveTab(item.id); setSelectedClient(null); setSelectedProject(null); setIsEditing(false); setSearchQuery(''); setErrorMsg(null); }} className={`w-full flex items-center justify-center lg:justify-start gap-3 p-3 lg:px-4 lg:py-3.5 rounded-2xl transition-all ${isActive ? (isDarkMode ? 'bg-purple-500/20 text-purple-400' : 'bg-purple-50 text-purple-600 font-bold shadow-sm') : `text-slate-400 hover:${isDarkMode ? 'bg-slate-800' : 'bg-slate-50'}`}`}>
+                             <button key={item.id} onClick={() => { setActiveTab(item.id); setSelectedClient(null); setSelectedProject(null); setIsEditing(false); setSearchQuery(''); setErrorMsg(null); setReminderMode('preset'); }} className={`w-full flex items-center justify-center lg:justify-start gap-3 p-3 lg:px-4 lg:py-3.5 rounded-2xl transition-all ${isActive ? (isDarkMode ? 'bg-purple-500/20 text-purple-400' : 'bg-purple-50 text-purple-600 font-bold shadow-sm') : `text-slate-400 hover:${isDarkMode ? 'bg-slate-800' : 'bg-slate-50'}`}`}>
                                  <Icon className="w-6 h-6 lg:w-5 lg:h-5" />
                                  <span className="hidden lg:block text-sm">{item.label}</span>
                              </button>
@@ -1144,7 +1201,7 @@
                   const Icon = item.icon;
                   const isActive = activeTab === item.id;
                   return (
-                      <button key={item.id} onClick={() => { setActiveTab(item.id); setSelectedClient(null); setSelectedProject(null); setIsEditing(false); setSearchQuery(''); setErrorMsg(null); }} className={`flex flex-col items-center gap-1 p-2 w-20 transition-colors ${isActive ? (isDarkMode ? 'text-purple-400' : 'text-purple-600') : 'text-slate-400'}`}>
+                      <button key={item.id} onClick={() => { setActiveTab(item.id); setSelectedClient(null); setSelectedProject(null); setIsEditing(false); setSearchQuery(''); setErrorMsg(null); setReminderMode('preset'); }} className={`flex flex-col items-center gap-1 p-2 w-20 transition-colors ${isActive ? (isDarkMode ? 'text-purple-400' : 'text-purple-600') : 'text-slate-400'}`}>
                           <Icon className={`w-5 h-5 ${isActive ? 'animate-bounce' : ''}`} style={{ animationIterationCount: 1 }} />
                           <span className={`text-[10px] font-bold ${isActive ? '' : 'font-normal'}`}>{item.label}</span>
                       </button>
