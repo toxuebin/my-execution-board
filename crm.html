@@ -65,7 +65,7 @@
       Target, Briefcase, PhoneCall, Key, UploadCloud, Share2, Copy, Check, Map, UserCheck, DownloadCloud
     } = LucideIcons;
 
-    const SALESPERSONS = ['钱学斌（管理员）', '步飞', '周薇', '周洋', '其他'];
+    const SALESPERSONS = ['钱学斌（管理员）', '吕军杰', '步飞', '周薇', '周洋', '其他'];
     const EXPORT_PWD = '18668375888a';
 
     const userDefaultConfig = {
@@ -213,7 +213,6 @@
       };
 
       const handleUnlock = () => {
-        // Updated: Only 20120903 is allowed now.
         if (pwdInput === '20120903') { setIsLocked(false); setPwdInput(''); } 
         else { setShake(true); setTimeout(() => setShake(false), 500); setPwdInput(''); }
       };
@@ -427,7 +426,7 @@
 
       const filteredClients = useMemo(() => {
           return clients.filter(c => c.name?.includes(searchQuery) || c.phone?.includes(searchQuery) || c.intentArea?.includes(searchQuery) || c.salesperson?.includes(searchQuery)
-          ).sort((a, b) => { const priority = { 'S': 4, 'A': 3, 'B': 2, 'C': 1 }; return (priority[b.level] || 0) - (priority[a.level] || 0); });
+          ).sort((a, b) => { const priority = { 'S': 4, 'A': 3, 'B': 2, 'C': 1, '成交': 0 }; return (priority[b.level] || 0) - (priority[a.level] || 0); });
       }, [clients, searchQuery]);
 
       const filteredProjects = useMemo(() => {
@@ -495,7 +494,7 @@
                                   <div className="flex flex-col gap-1">
                                       <div className="flex items-center gap-2">
                                           <span className={`font-bold text-sm sm:text-base ${theme.textMain}`}>{client.name}</span>
-                                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold text-white ${client.level === 'S' ? 'bg-yellow-500' : client.level === 'A' ? 'bg-red-500' : 'bg-blue-500'}`}>{client.level}级</span>
+                                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold text-white ${client.level === 'S' ? 'bg-yellow-500' : client.level === 'A' ? 'bg-red-500' : client.level === '成交' ? 'bg-emerald-500' : 'bg-blue-500'}`}>{client.level}{client.level === '成交' ? '' : '级'}</span>
                                           {client.salesperson && client.salesperson !== '钱学斌（管理员）' && (
                                               <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded bg-purple-100 text-purple-600 dark:bg-purple-900/30 dark:text-purple-400`}>{client.salesperson}</span>
                                           )}
@@ -541,7 +540,7 @@
                               <div key={client.id} onClick={() => setSelectedClient(client)} className={`p-4 sm:p-5 rounded-2xl border ${theme.card} shadow-sm cursor-pointer hover:shadow-md transition-all hover:-translate-y-1 group`}>
                                   <div className="flex justify-between items-start mb-3">
                                       <div className="flex items-center gap-3">
-                                          <div className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center text-base sm:text-lg font-black text-white shadow-inner ${client.level === 'S' ? 'bg-gradient-to-br from-yellow-400 to-orange-500' : client.level === 'A' ? 'bg-gradient-to-br from-red-400 to-rose-600' : 'bg-gradient-to-br from-blue-400 to-indigo-600'}`}>
+                                          <div className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center font-black text-white shadow-inner ${client.level === '成交' ? 'text-sm sm:text-base' : 'text-base sm:text-lg'} ${client.level === 'S' ? 'bg-gradient-to-br from-yellow-400 to-orange-500' : client.level === 'A' ? 'bg-gradient-to-br from-red-400 to-rose-600' : client.level === '成交' ? 'bg-gradient-to-br from-emerald-400 to-emerald-600' : 'bg-gradient-to-br from-blue-400 to-indigo-600'}`}>
                                               {client.level}
                                           </div>
                                           <div>
@@ -675,7 +674,7 @@
                               <div>
                                   <label className={`block text-xs font-bold mb-1.5 ${theme.textSub}`}>意向等级</label>
                                   <select value={editFormData.level || 'B'} onChange={e=>setEditFormData({...editFormData, level: e.target.value})} className={`w-full p-3 rounded-xl border text-sm ${theme.inputBg} ${theme.textMain}`}>
-                                      <option value="S">S级 (准客/逼定)</option><option value="A">A级 (高意向/常看房)</option><option value="B">B级 (观望/需培育)</option><option value="C">C级 (死客/无效)</option>
+                                      <option value="S">S级 (准客/逼定)</option><option value="A">A级 (高意向/常看房)</option><option value="B">B级 (观望/需培育)</option><option value="C">C级 (死客/无效)</option><option value="成交">已成交 (交易完成)</option>
                                   </select>
                               </div>
                           </div>
@@ -716,8 +715,8 @@
                                   <div className="flex justify-between items-start">
                                       <div>
                                           <h2 className={`text-2xl sm:text-3xl font-black tracking-tight ${theme.textMain}`}>{selectedClient.name}</h2>
-                                          <div className={`mt-2 inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] sm:text-xs font-bold text-white shadow-sm ${selectedClient.level === 'S' ? 'bg-yellow-500' : selectedClient.level === 'A' ? 'bg-red-500' : 'bg-blue-500'}`}>
-                                              {selectedClient.level}级意向
+                                          <div className={`mt-2 inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] sm:text-xs font-bold text-white shadow-sm ${selectedClient.level === 'S' ? 'bg-yellow-500' : selectedClient.level === 'A' ? 'bg-red-500' : selectedClient.level === '成交' ? 'bg-emerald-500' : 'bg-blue-500'}`}>
+                                              {selectedClient.level}{selectedClient.level === '成交' ? '' : '级意向'}
                                           </div>
                                       </div>
                                       <div className="flex gap-2">
