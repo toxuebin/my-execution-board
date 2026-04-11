@@ -426,7 +426,7 @@
       }, [clients, searchQuery]);
 
       const closedDeals = useMemo(() => {
-          return clients.filter(c => c.level === '成交' && (c.name?.includes(searchQuery) || c.phone?.includes(searchQuery) || c.dealProjectUnit?.includes(searchQuery)));
+          return clients.filter(c => c.level === '成交' && (c.name?.includes(searchQuery) || c.phone?.includes(searchQuery) || (c.dealProjectUnit && c.dealProjectUnit.includes(searchQuery))));
       }, [clients, searchQuery]);
 
       const filteredProjects = useMemo(() => {
@@ -683,7 +683,7 @@
                               <div className={`p-4 rounded-xl border border-emerald-200 bg-emerald-50/50 dark:bg-emerald-900/10 dark:border-emerald-800/50 space-y-4`}>
                                   <div className="flex items-center gap-2 mb-2">
                                       <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                                      <span className="text-xs font-black text-emerald-600 dark:text-emerald-400">成交专项资料</span>
+                                      <span className="text-xs font-black text-emerald-600 dark:text-emerald-400">成交专项资料 (在此修改)</span>
                                   </div>
                                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                                       <div>
@@ -735,7 +735,7 @@
                   <div className="flex flex-col lg:flex-row gap-4 sm:gap-6 h-full">
                       <div className="w-full lg:w-1/3 space-y-4">
                           <button onClick={() => setSelectedClient(null)} className={`flex items-center gap-1 text-sm font-bold hover:underline mb-1 ${theme.primaryText}`}>
-                              <ChevronRight className="w-4 h-4 rotate-180" /> 返回客源库
+                              <ChevronRight className="w-4 h-4 rotate-180" /> 返回上一级
                           </button>
                           <div className={`p-5 sm:p-6 rounded-[2rem] border ${theme.card} shadow-lg relative overflow-hidden`}>
                               <div className="absolute top-0 right-0 p-4 opacity-10"><Users className="w-20 h-20 sm:w-24 sm:h-24" /></div>
@@ -786,7 +786,7 @@
                                           <div className="flex items-center gap-3">
                                               <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center text-emerald-500"><Building2 className="w-4 h-4 sm:w-5 sm:h-5"/></div>
                                               <div>
-                                                  <p className={`text-[9px] sm:text-[10px] font-bold uppercase tracking-widest ${theme.textSub}`}>成交楼盘</p>
+                                                  <p className={`text-[9px] sm:text-[10px] font-bold uppercase tracking-widest text-emerald-600 dark:text-emerald-400`}>成交楼盘</p>
                                                   <p className={`font-bold text-sm sm:text-base ${theme.textMain}`}>{selectedClient.dealProjectUnit || '--'}</p>
                                               </div>
                                           </div>
@@ -959,7 +959,7 @@
                           )}
                       </div>
                   </>
-              ) : null}
+              ) : renderClients() /* 在 Deals 标签下复用 Clients 的详情和编辑 UI */}
           </div>
       );
 
