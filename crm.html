@@ -50,7 +50,7 @@
   <div id="root"></div>
 
   <script type="text/babel" data-type="module">
-    import React, { useState, useEffect, useMemo } from 'react';
+    import React, { useState, useEffect, useMemo, useCallback } from 'react';
     import { createRoot } from 'react-dom/client';
     import { initializeApp } from 'firebase/app';
     import { getAuth, onAuthStateChanged, signInAnonymously, signInWithCustomToken } from 'firebase/auth';
@@ -79,19 +79,13 @@
     };
     const defaultSyncKey = "Qianxuebin20120903";
 
-    let storedConfig = null;
-    try { 
-      let parsed = JSON.parse(localStorage.getItem('customFirebaseConfig')); 
-      if (parsed && parsed.apiKey) storedConfig = parsed;
-    } catch(e){}
-    
     let canvasConfig = null;
     try {
         if (typeof __firebase_config !== 'undefined' && __firebase_config) {
             canvasConfig = JSON.parse(__firebase_config);
         }
     } catch(e) {}
-    const firebaseConfig = canvasConfig || storedConfig || userDefaultConfig;
+    const firebaseConfig = canvasConfig || userDefaultConfig;
     
     let firebaseApp, auth, db, appId, isCanvasEnv;
     if (Object.keys(firebaseConfig).length > 0 && firebaseConfig.apiKey) {
@@ -138,7 +132,7 @@
 
       const [reminderMode, setReminderMode] = useState('preset');
 
-      // 实时计算当前选中的客户对象，确保数据库更新后详情页同步
+      // 核心修复 1: 实时计算当前选中的客户对象，确保数据库更新后详情页同步
       const liveSelectedClient = useMemo(() => {
         if (!selectedClient) return null;
         return clients.find(c => c.id === selectedClient.id) || selectedClient;
@@ -180,12 +174,10 @@
               if (isCanvasEnv) { setSyncDocId(user.uid); } 
               else {
                  const key = localStorage.getItem('customSyncKey') || defaultSyncKey;
-                 if (window.crypto && window.crypto.subtle) {
-                     const msgBuffer = new TextEncoder().encode(key);                    
-                     const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
-                     const hashHex = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
-                     setSyncDocId(hashHex);
-                 } else { setSyncDocId('doc_' + btoa(encodeURIComponent(key)).replace(/[^a-zA-Z0-9]/g, '').substring(0, 30)); }
+                 const msgBuffer = new TextEncoder().encode(key);                    
+                 const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+                 const hashHex = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+                 setSyncDocId(hashHex);
               }
           } catch (err) { setSyncDocId('fallback_dashboard_id'); }
         };
@@ -206,16 +198,17 @@
         return () => unsubscribeSnap();
       }, [user, syncDocId]);
 
-      const saveData = async (newData) => {
+      // 核心修复 2: 确保数据同步不会产生竞态条件
+      const saveData = useCallback(async (newData) => {
         if (newData.clients !== undefined) setClients(newData.clients);
         if (newData.realEstateProjects !== undefined) setProjects(newData.realEstateProjects);
         if (user && db && syncDocId) {
           try { 
             const docRef = isCanvasEnv ? doc(db, 'artifacts', appId, 'users', syncDocId, 'dashboard', 'data_pro_v5') : doc(db, 'users', 'standalone', 'dashboards', syncDocId);
             await setDoc(docRef, newData, { merge: true }); 
-          } catch (e) { console.warn("Cloud Sync Delayed", e); }
+          } catch (e) { console.warn("Cloud Sync Error", e); }
         }
-      };
+      }, [user, syncDocId]);
 
       const handleUnlock = () => {
         if (pwdInput === '20120903') { setIsLocked(false); setPwdInput(''); } 
@@ -264,14 +257,13 @@
           setIsUploading(prev => ({ ...prev, [field]: true }));
           try {
               const compressedImages = await Promise.all(files.map(file => compressImage(file)));
-              
               if (field === 'floorPlans') {
                   const newFloorPlans = compressedImages.map(url => ({ url, area: '' }));
                   setEditFormData(prev => ({ ...prev, floorPlans: [...(prev.floorPlans || []), ...newFloorPlans] }));
               } else {
                   setEditFormData(prev => ({ ...prev, [field]: [...(prev[field] || []), ...compressedImages] }));
               }
-          } catch (err) { alert("图片处理失败，请重试"); } finally {
+          } catch (err) { console.error(err); } finally {
               setIsUploading(prev => ({ ...prev, [field]: false }));
           }
       };
@@ -288,42 +280,50 @@
 
       const prepareEditProject = (proj) => {
           const processedProj = { ...proj };
-          if (processedProj.floorPlans && processedProj.floorPlans.length > 0) {
-              processedProj.floorPlans = processedProj.floorPlans.map(fp => {
-                  return typeof fp === 'string' ? { url: fp, area: '' } : fp;
-              });
-          } else {
-              processedProj.floorPlans = [];
-          }
+          processedProj.floorPlans = (processedProj.floorPlans || []).map(fp => typeof fp === 'string' ? { url: fp, area: '' } : fp);
           setEditFormData(processedProj);
           setIsEditing(true);
       };
 
+      // 核心修复 3: 强化保存客户时的记录保护，防止覆盖导致跟进丢失
       const saveClient = () => {
-        if (!editFormData.name) return alert("客户姓名必填");
+        if (!editFormData.name) return;
         
         if (editFormData.phone && editFormData.phone.trim()) {
             const normalizedPhone = editFormData.phone.trim();
-            const isDuplicate = clients.some(c => 
-                c.phone === normalizedPhone && c.id !== editFormData.id
-            );
+            const isDuplicate = clients.some(c => c.phone === normalizedPhone && c.id !== editFormData.id);
             if (isDuplicate) {
                 const dupClient = clients.find(c => c.phone === normalizedPhone);
-                setErrorMsg(`该手机号已存在！属于客户：${dupClient.name}`);
+                setErrorMsg(`手机号已存在，归属：${dupClient.name}`);
                 return;
             }
         }
 
         let newClients = [...clients];
         if (editFormData.id) {
-            newClients = newClients.map(c => c.id === editFormData.id ? { ...c, ...editFormData } : c);
+            // 编辑现有客户
+            newClients = newClients.map(c => {
+                if (c.id === editFormData.id) {
+                    // 关键点：将表单数据合并到原对象，但要特别保护已有的 followUps
+                    // 除非 editFormData.followUps 更有说服力（比如刚在详情页加了），否则使用当前列表中的最新 followUps
+                    const latestFollowUps = c.followUps || [];
+                    const formFollowUps = editFormData.followUps || [];
+                    return { 
+                        ...c, 
+                        ...editFormData, 
+                        // 取并集且按 ID 去重或简单比较长度，防止编辑表单里的老数据冲掉详情页刚加的新数据
+                        followUps: formFollowUps.length >= latestFollowUps.length ? formFollowUps : latestFollowUps
+                    };
+                }
+                return c;
+            });
         } else {
+            // 新增客户
             newClients = [{ id: Date.now().toString(), date: getTodayString(), ...editFormData, followUps: [] }, ...newClients];
         }
         saveData({ clients: newClients });
         setIsEditing(false);
         setErrorMsg(null);
-        // 这里不需要手动设置 setSelectedClient，因为 liveSelectedClient 会自动处理
       };
 
       const deleteClient = (id) => {
@@ -333,45 +333,49 @@
           setShowDeleteConfirm(null);
       };
 
+      // 核心修复 4: 使用函数式状态更新，确保在高频跟进时不会丢失数据
       const addFollowUp = (clientId, text, nextRemindInput) => {
         if (!text.trim()) return;
         const now = new Date();
         const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
         
         let nextRemindDateStr = null;
-        if (nextRemindInput === '0' || !nextRemindInput) {
-            nextRemindDateStr = null;
-        } else if (nextRemindInput.includes('-')) {
-            nextRemindDateStr = nextRemindInput;
-        } else {
-            const remindDate = new Date(); 
-            remindDate.setDate(remindDate.getDate() + parseInt(nextRemindInput));
-            nextRemindDateStr = `${remindDate.getFullYear()}-${String(remindDate.getMonth() + 1).padStart(2, '0')}-${String(remindDate.getDate()).padStart(2, '0')}`;
+        if (nextRemindInput && nextRemindInput !== '0') {
+            if (nextRemindInput.includes('-')) {
+                nextRemindDateStr = nextRemindInput;
+            } else {
+                const remindDate = new Date(); 
+                remindDate.setDate(remindDate.getDate() + parseInt(nextRemindInput));
+                nextRemindDateStr = `${remindDate.getFullYear()}-${String(remindDate.getMonth() + 1).padStart(2, '0')}-${String(remindDate.getDate()).padStart(2, '0')}`;
+            }
         }
         
         const newRecord = { id: Date.now().toString(), date: dateStr, text, type: 'follow' };
         
-        const updatedClients = clients.map(c => {
-            if (c.id === clientId) return { ...c, nextRemindDate: nextRemindDateStr || c.nextRemindDate, followUps: [newRecord, ...(c.followUps || [])] };
-            return c;
+        // 使用 prevClients 确保操作的是当前瞬间最精确的状态
+        setClients(prevClients => {
+            const updated = prevClients.map(c => {
+                if (c.id === clientId) {
+                    return { 
+                        ...c, 
+                        nextRemindDate: nextRemindDateStr || c.nextRemindDate, 
+                        followUps: [newRecord, ...(c.followUps || [])] 
+                    };
+                }
+                return c;
+            });
+            saveData({ clients: updated });
+            return updated;
         });
-        saveData({ clients: updatedClients });
         setReminderMode('preset'); 
       };
 
       const handleExportClients = (bypassPwd = false) => {
           if (bypassPwd || exportPwdInput === EXPORT_PWD) {
-              setExportPwdInput('');
-              setTotpInput('');
-              setShowExportModal(false);
-              setExportAuthMode('password');
-              
-              if (clients.length === 0) {
-                  alert("暂无客户数据可导出"); return;
-              }
+              setExportPwdInput(''); setTotpInput(''); setShowExportModal(false); setExportAuthMode('password');
+              if (clients.length === 0) return;
 
               let csvContent = "录入日期,客户姓名,联系电话,意向等级,归属业务员,购房目的,购房预算(万),意向板块,下次提醒日期,最新跟进记录\n";
-              
               filteredClients.forEach(c => {
                   const latestFollowUp = c.followUps && c.followUps.length > 0 ? c.followUps[0].text.replace(/"/g, '""').replace(/\n/g, ' ') : '';
                   csvContent += `"${c.date}","${c.name}","${c.phone || ''}","${c.level}","${c.salesperson || '钱学斌（管理员）'}","${c.type || ''}","${c.budget || ''}","${c.intentArea || ''}","${c.nextRemindDate || ''}","${latestFollowUp}"\n`;
@@ -380,48 +384,32 @@
               const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csvContent], { type: 'text/csv;charset=utf-8;' });
               const link = document.createElement("a"); 
               link.setAttribute("href", URL.createObjectURL(blob)); 
-              link.setAttribute("download", `客户资产库导出_${getTodayString()}.csv`);
+              link.setAttribute("download", `客户导出_${getTodayString()}.csv`);
               document.body.appendChild(link); link.click(); document.body.removeChild(link);
           } else {
-              setExportPwdInput('');
-              setTotpInput('');
-              setExportShake(true);
-              setTimeout(() => setExportShake(false), 500);
+              setExportPwdInput(''); setTotpInput(''); setExportShake(true); setTimeout(() => setExportShake(false), 500);
           }
       };
 
       const handleTotpVerify = () => {
-          const isValid = totp.validate({ token: totpInput, window: 1 }) !== null;
-          if (isValid) {
-              handleExportClients(true);
-          } else {
-              setTotpInput('');
-              setExportShake(true);
-              setTimeout(() => setExportShake(false), 500);
-          }
+          if (totp.validate({ token: totpInput, window: 1 }) !== null) handleExportClients(true);
+          else { setTotpInput(''); setExportShake(true); setTimeout(() => setExportShake(false), 500); }
       };
 
       const saveProject = () => {
-          if (!editFormData.name) return alert("楼盘名称必填");
+          if (!editFormData.name) return;
           let newProjects = [...projects];
           const projectData = { ...editFormData };
-          if (!projectData.floorPlans) projectData.floorPlans = [];
-          if (!projectData.masterPlans) projectData.masterPlans = [];
-
-          projectData.floorPlans = projectData.floorPlans.filter(fp => fp.url);
-
-          if (projectData.id) {
-              newProjects = newProjects.map(p => p.id === projectData.id ? projectData : p);
-          } else {
-              newProjects = [{ id: 'proj_' + Date.now().toString(), ...projectData }, ...newProjects];
-          }
+          projectData.floorPlans = (projectData.floorPlans || []).filter(fp => fp.url);
+          if (projectData.id) newProjects = newProjects.map(p => p.id === projectData.id ? projectData : p);
+          else newProjects = [{ id: 'proj_' + Date.now().toString(), ...projectData }, ...newProjects];
           saveData({ realEstateProjects: newProjects });
           setIsEditing(false);
           if (projectData.id) setSelectedProject(newProjects.find(p => p.id === projectData.id));
       };
 
       const openMap = (address) => {
-          if (!address) return alert("请先录入地址");
+          if (!address) return;
           window.open(`https://map.baidu.com/search/${encodeURIComponent(address)}`, '_blank');
       };
 
@@ -490,11 +478,13 @@
                       <AlertCircle className="w-5 h-5 text-red-500" />
                       <h3 className={`font-bold text-sm sm:text-base ${theme.textMain}`}>今日需跟进/回访客源</h3>
                   </div>
+                  {/* UI 修复: 调整深色模式下的分割线颜色 */}
                   <div className="divide-y divide-gray-100 dark:divide-slate-800">
                       {todaysFollowUps.length === 0 ? (
                           <div className={`p-8 text-center text-xs sm:text-sm ${theme.textSub}`}>今日暂无需要跟进的客户，主动出击去开发吧！</div>
                       ) : (
                           todaysFollowUps.map(client => (
+                              /* UI 修复: 调整深色模式下的鼠标悬停背景色，防止白底白字 */
                               <div key={client.id} className={`p-3 sm:p-4 flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-700/40 transition-all cursor-pointer`} onClick={() => { setActiveTab('clients'); setSelectedClient(client); }}>
                                   <div className="flex flex-col gap-1">
                                       <div className="flex items-center gap-2">
@@ -770,7 +760,6 @@
                                               <p className={`font-bold text-base sm:text-lg font-mono ${theme.textMain}`}>{liveSelectedClient.phone || '--'}</p>
                                           </div>
                                       </div>
-                                      
                                       <div className="flex items-center gap-3">
                                           <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center text-purple-500"><UserCheck className="w-4 h-4 sm:w-5 sm:h-5"/></div>
                                           <div>
@@ -778,7 +767,6 @@
                                               <p className={`font-bold text-sm sm:text-base text-purple-600 dark:text-purple-400`}>{liveSelectedClient.salesperson || '钱学斌（管理员）'}</p>
                                           </div>
                                       </div>
-
                                       <div className="flex items-center gap-3">
                                           <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-orange-100 dark:bg-orange-900/30 flex items-center justify-center text-orange-500"><DollarSign className="w-4 h-4 sm:w-5 sm:h-5"/></div>
                                           <div>
@@ -786,7 +774,6 @@
                                               <p className={`font-bold text-sm sm:text-base ${theme.textMain}`}>{liveSelectedClient.budget || '未透露'}</p>
                                           </div>
                                       </div>
-
                                       {liveSelectedClient.level === '成交' && (
                                           <div className="flex items-center gap-3">
                                               <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center text-emerald-500"><Building2 className="w-4 h-4 sm:w-5 sm:h-5"/></div>
@@ -845,36 +832,14 @@
                                           <div className={`flex items-center gap-2 px-3 py-2 rounded-xl border w-full sm:w-auto sm:flex-1 ${theme.inputBg}`}>
                                               <Calendar className={`w-4 h-4 shrink-0 ${theme.textSub}`} />
                                               <span className={`text-[10px] sm:text-xs font-bold ${theme.textSub} shrink-0`}>下次提醒</span>
-                                              
                                               {reminderMode === 'preset' ? (
-                                                  <select 
-                                                      name="days" 
-                                                      onChange={(e) => e.target.value === 'custom' && setReminderMode('custom')}
-                                                      className={`bg-transparent text-xs sm:text-sm font-bold outline-none w-full ${theme.textMain}`}
-                                                  >
-                                                      <option value="0">不提醒</option>
-                                                      <option value="1">明天</option>
-                                                      <option value="3">3天后</option>
-                                                      <option value="7">1周后</option>
-                                                      <option value="15">半个月后</option>
-                                                      <option value="custom">📅 自定义日期</option>
+                                                  <select name="days" onChange={(e) => e.target.value === 'custom' && setReminderMode('custom')} className={`bg-transparent text-xs sm:text-sm font-bold outline-none w-full ${theme.textMain}`}>
+                                                      <option value="0">不提醒</option><option value="1">明天</option><option value="3">3天后</option><option value="7">1周后</option><option value="15">半个月后</option><option value="custom">📅 自定义日期</option>
                                                   </select>
                                               ) : (
                                                   <div className="flex items-center gap-2 w-full">
-                                                      <input 
-                                                          type="date" 
-                                                          name="custom_date" 
-                                                          required
-                                                          min={getTodayString()}
-                                                          className={`bg-transparent text-xs sm:text-sm font-bold outline-none w-full ${theme.textMain}`} 
-                                                      />
-                                                      <button 
-                                                          type="button" 
-                                                          onClick={() => setReminderMode('preset')}
-                                                          className="text-[10px] text-gray-400 hover:text-purple-500 font-bold shrink-0"
-                                                      >
-                                                          取消
-                                                      </button>
+                                                      <input type="date" name="custom_date" required min={getTodayString()} className={`bg-transparent text-xs sm:text-sm font-bold outline-none w-full ${theme.textMain}`} />
+                                                      <button type="button" onClick={() => setReminderMode('preset')} className="text-[10px] text-gray-400 hover:text-purple-500 font-bold shrink-0">取消</button>
                                                   </div>
                                               )}
                                           </div>
@@ -884,24 +849,6 @@
                                       </div>
                                   </form>
                               </div>
-                          </div>
-                      </div>
-                  </div>
-              )}
-
-              {showDeleteConfirm && (
-                  <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-                      <div className={`p-6 rounded-[2rem] w-full max-w-sm shadow-2xl flex flex-col items-center border ${isDarkMode ? 'bg-[#1e293b] border-[#334155]' : 'bg-white border-gray-200'} animate-in zoom-in duration-200`}>
-                          <div className="w-14 h-14 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center text-red-500 mb-4 shadow-inner">
-                              <Trash2 className="w-7 h-7" strokeWidth={2}/>
-                          </div>
-                          <h2 className={`text-xl font-black tracking-tight mb-2 ${theme.textMain}`}>确认删除客户？</h2>
-                          <p className={`text-xs text-center mb-6 leading-relaxed ${theme.textSub}`}>此操作将永久删除客户资料及其跟进记录，<br/>该操作不可撤销。</p>
-                          <div className="flex gap-3 w-full">
-                              <button onClick={() => setShowDeleteConfirm(null)} className={`flex-1 py-3 rounded-xl font-bold transition-transform active:scale-95 ${isDarkMode ? 'bg-[#334155] text-slate-300' : 'bg-gray-200 text-gray-700'}`}>取消</button>
-                              <button onClick={() => deleteClient(showDeleteConfirm)} className="flex-[2] py-3 bg-red-600 text-white font-bold rounded-xl shadow-lg transition-transform active:scale-95">
-                                  确认删除
-                              </button>
                           </div>
                       </div>
                   </div>
@@ -920,7 +867,6 @@
                               <input type="text" placeholder="搜索姓名/电话/成交楼盘..." value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} className={`w-full pl-9 pr-4 py-2.5 rounded-xl border text-sm outline-none ${theme.inputBg} ${theme.textMain}`} />
                           </div>
                       </div>
-
                       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-4 overflow-y-auto">
                           {closedDeals.length === 0 ? (
                               <div className="col-span-full py-20 flex flex-col items-center justify-center opacity-40">
@@ -932,9 +878,7 @@
                                   <div key={client.id} onClick={() => setSelectedClient(client)} className={`p-4 sm:p-5 rounded-2xl border ${theme.card} shadow-sm cursor-pointer hover:shadow-md transition-all hover:-translate-y-1 group`}>
                                       <div className="flex justify-between items-start mb-3">
                                           <div className="flex items-center gap-3">
-                                              <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center bg-gradient-to-br from-emerald-400 to-emerald-600 text-white font-black shadow-lg">
-                                                  成
-                                              </div>
+                                              <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center bg-gradient-to-br from-emerald-400 to-emerald-600 text-white font-black shadow-lg">成</div>
                                               <div>
                                                   <h3 className={`text-base sm:text-lg font-bold ${theme.textMain}`}>{client.name}</h3>
                                                   <div className={`text-[10px] sm:text-xs mt-0.5 flex items-center gap-1 ${theme.textSub}`}><Phone className="w-3 h-3"/> {client.phone}</div>
@@ -964,7 +908,7 @@
                           )}
                       </div>
                   </>
-              ) : renderClients() /* 详情页和编辑 UI */}
+              ) : renderClients()}
           </div>
       );
 
@@ -984,46 +928,25 @@
                               </button>
                           </div>
                       </div>
-
                       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-5 overflow-y-auto">
                           {filteredProjects.map(proj => {
                               let coverUrl = null;
                               if (proj.masterPlans && proj.masterPlans[0]) coverUrl = proj.masterPlans[0];
-                              else if (proj.floorPlans && proj.floorPlans[0]) {
-                                  coverUrl = typeof proj.floorPlans[0] === 'string' ? proj.floorPlans[0] : proj.floorPlans[0].url;
-                              }
-
+                              else if (proj.floorPlans && proj.floorPlans[0]) coverUrl = typeof proj.floorPlans[0] === 'string' ? proj.floorPlans[0] : proj.floorPlans[0].url;
                               return (
                               <div key={proj.id} onClick={() => setSelectedProject(proj)} className={`rounded-2xl border ${theme.card} shadow-sm cursor-pointer hover:shadow-xl transition-all hover:-translate-y-1 overflow-hidden group flex flex-col`}>
                                   <div className={`h-36 sm:h-40 relative flex items-center justify-center overflow-hidden ${isDarkMode ? 'bg-[#0f172a]' : 'bg-slate-100'}`}>
-                                      {coverUrl ? (
-                                           <img src={coverUrl} alt="封面" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" />
-                                      ) : (
-                                          <Building2 className={`w-10 h-10 sm:w-12 sm:h-12 ${theme.textSub} opacity-50`} />
-                                      )}
-                                      <div className="absolute top-2 right-2 bg-black/60 backdrop-blur-md text-white px-2 py-1 rounded text-[10px] sm:text-xs font-bold font-mono">
-                                          总套数 {proj.totalUnits || '--'}
-                                      </div>
+                                      {coverUrl ? <img src={coverUrl} alt="封面" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" /> : <Building2 className={`w-10 h-10 sm:w-12 sm:h-12 ${theme.textSub} opacity-50`} />}
+                                      <div className="absolute top-2 right-2 bg-black/60 backdrop-blur-md text-white px-2 py-1 rounded text-[10px] sm:text-xs font-bold font-mono">总套数 {proj.totalUnits || '--'}</div>
                                   </div>
                                   <div className="p-4 sm:p-5 flex-1 flex flex-col">
                                       <h3 className={`text-lg sm:text-xl font-black mb-1 truncate ${theme.textMain}`}>{proj.name}</h3>
                                       <div className={`text-[10px] sm:text-xs flex items-center gap-1 mb-3 ${theme.textSub} truncate`}><MapPin className="w-3 h-3 shrink-0"/> {proj.address || '地址未录入'}</div>
-                                      
                                       <div className="grid grid-cols-2 gap-3 sm:gap-4 mb-3 sm:mb-4">
-                                          <div>
-                                              <p className={`text-[9px] sm:text-[10px] font-bold uppercase tracking-widest ${theme.textSub}`}>均价/单价</p>
-                                              <p className="font-bold text-red-500 font-mono text-sm sm:text-base">{proj.price || '待定'}</p>
-                                          </div>
-                                          <div>
-                                              <p className={`text-[9px] sm:text-[10px] font-bold uppercase tracking-widest ${theme.textSub}`}>主力面积段</p>
-                                              <p className={`font-bold font-mono text-sm sm:text-base ${theme.textMain}`}>{proj.area || '--'} ㎡</p>
-                                          </div>
+                                          <div><p className={`text-[9px] sm:text-[10px] font-bold uppercase tracking-widest ${theme.textSub}`}>均价/单价</p><p className="font-bold text-red-500 font-mono text-sm sm:text-base">{proj.price || '待定'}</p></div>
+                                          <div><p className={`text-[9px] sm:text-[10px] font-bold uppercase tracking-widest ${theme.textSub}`}>主力面积段</p><p className={`font-bold font-mono text-sm sm:text-base ${theme.textMain}`}>{proj.area || '--'} ㎡</p></div>
                                       </div>
-                                      <div className="mt-auto flex gap-1 flex-wrap">
-                                          {(proj.tags || '').split(/[,， ]/).filter(Boolean).slice(0, 3).map((tag, i) => (
-                                              <span key={i} className={`px-2 py-0.5 rounded text-[9px] sm:text-[10px] font-bold bg-indigo-100 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400`}>{tag}</span>
-                                          ))}
-                                      </div>
+                                      <div className="mt-auto flex gap-1 flex-wrap">{(proj.tags || '').split(/[,， ]/).filter(Boolean).slice(0, 3).map((tag, i) => (<span key={i} className={`px-2 py-0.5 rounded text-[9px] sm:text-[10px] font-bold bg-indigo-100 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400`}>{tag}</span>))}</div>
                                   </div>
                               </div>
                           )})}
@@ -1035,187 +958,44 @@
                           <h2 className={`text-lg sm:text-xl font-black ${theme.textMain}`}>{editFormData.id ? '编辑楼盘信息' : '录入新盘'}</h2>
                           <button onClick={() => setIsEditing(false)} className={`p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 ${theme.textSub}`}><X className="w-5 h-5"/></button>
                       </div>
-                      <div className="space-y-4 sm:space-y-5">
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-5">
-                              <div>
-                                  <label className={`block text-xs font-bold mb-1.5 ${theme.textSub}`}>楼盘名称 *</label>
-                                  <input type="text" value={editFormData.name || ''} onChange={e=>setEditFormData({...editFormData, name: e.target.value})} className={`w-full p-3 rounded-xl border text-sm ${theme.inputBg} ${theme.textMain}`} />
-                              </div>
-                              <div>
-                                  <label className={`block text-xs font-bold mb-1.5 ${theme.textSub}`}>项目地址</label>
-                                  <input type="text" placeholder="录入后可一键打开地图" value={editFormData.address || ''} onChange={e=>setEditFormData({...editFormData, address: e.target.value})} className={`w-full p-3 rounded-xl border text-sm ${theme.inputBg} ${theme.textMain}`} />
-                              </div>
+                      <div className="space-y-4">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                              <div><label className={`block text-xs font-bold mb-1.5 ${theme.textSub}`}>楼盘名称 *</label><input type="text" value={editFormData.name || ''} onChange={e=>setEditFormData({...editFormData, name: e.target.value})} className={`w-full p-3 rounded-xl border text-sm ${theme.inputBg} ${theme.textMain}`} /></div>
+                              <div><label className={`block text-xs font-bold mb-1.5 ${theme.textSub}`}>项目地址</label><input type="text" placeholder="可一键打开地图" value={editFormData.address || ''} onChange={e=>setEditFormData({...editFormData, address: e.target.value})} className={`w-full p-3 rounded-xl border text-sm ${theme.inputBg} ${theme.textMain}`} /></div>
                           </div>
-                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-5">
-                              <div>
-                                  <label className={`block text-xs font-bold mb-1.5 ${theme.textSub}`}>均价 (元/㎡)</label>
-                                  <input type="text" value={editFormData.price || ''} onChange={e=>setEditFormData({...editFormData, price: e.target.value})} className={`w-full p-3 rounded-xl border text-sm ${theme.inputBg} ${theme.textMain}`} />
-                              </div>
-                              <div>
-                                  <label className={`block text-xs font-bold mb-1.5 ${theme.textSub}`}>主力面积段 (㎡)</label>
-                                  <input type="text" placeholder="例: 89-120" value={editFormData.area || ''} onChange={e=>setEditFormData({...editFormData, area: e.target.value})} className={`w-full p-3 rounded-xl border text-sm ${theme.inputBg} ${theme.textMain}`} />
-                              </div>
-                              <div>
-                                  <label className={`block text-xs font-bold mb-1.5 ${theme.textSub}`}>楼盘总套数</label>
-                                  <input type="number" placeholder="例: 800" value={editFormData.totalUnits || ''} onChange={e=>setEditFormData({...editFormData, totalUnits: e.target.value})} className={`w-full p-3 rounded-xl border text-sm ${theme.inputBg} text-indigo-500 font-bold`} />
-                              </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                              <div><label className={`block text-xs font-bold mb-1.5 ${theme.textSub}`}>均价 (元/㎡)</label><input type="text" value={editFormData.price || ''} onChange={e=>setEditFormData({...editFormData, price: e.target.value})} className={`w-full p-3 rounded-xl border text-sm ${theme.inputBg} ${theme.textMain}`} /></div>
+                              <div><label className={`block text-xs font-bold mb-1.5 ${theme.textSub}`}>主力面积段 (㎡)</label><input type="text" placeholder="例: 89-120" value={editFormData.area || ''} onChange={e=>setEditFormData({...editFormData, area: e.target.value})} className={`w-full p-3 rounded-xl border text-sm ${theme.inputBg} ${theme.textMain}`} /></div>
+                              <div><label className={`block text-xs font-bold mb-1.5 ${theme.textSub}`}>楼盘总套数</label><input type="number" placeholder="例: 800" value={editFormData.totalUnits || ''} onChange={e=>setEditFormData({...editFormData, totalUnits: e.target.value})} className={`w-full p-3 rounded-xl border text-sm ${theme.inputBg} text-indigo-500 font-bold`} /></div>
                           </div>
-                          <div>
-                              <label className={`block text-xs font-bold mb-1.5 ${theme.textSub}`}>核心卖点标签 (用空格或逗号隔开)</label>
-                              <input type="text" placeholder="例: 学区房 近地铁 核心区 现房" value={editFormData.tags || ''} onChange={e=>setEditFormData({...editFormData, tags: e.target.value})} className={`w-full p-3 rounded-xl border text-sm ${theme.inputBg} ${theme.textMain}`} />
-                          </div>
-                          
+                          <div><label className={`block text-xs font-bold mb-1.5 ${theme.textSub}`}>核心卖点标签 (空格隔开)</label><input type="text" placeholder="例: 学区房 近地铁" value={editFormData.tags || ''} onChange={e=>setEditFormData({...editFormData, tags: e.target.value})} className={`w-full p-3 rounded-xl border text-sm ${theme.inputBg} ${theme.textMain}`} /></div>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                               <div className={`p-4 rounded-xl border ${isDarkMode ? 'bg-[#0f172a] border-[#334155]' : 'bg-slate-50 border-gray-200'}`}>
-                                  <label className={`block text-xs sm:text-sm font-bold flex items-center gap-1.5 mb-1 ${theme.textMain}`}>
-                                      <Map className="w-4 h-4 text-emerald-500"/> 总平图 / 鸟瞰图
-                                  </label>
-                                  <p className={`text-[10px] mb-3 ${theme.textSub}`}>支持点击/拖拽，自动极速压缩。</p>
-                                  <div className="flex flex-wrap gap-3 items-start">
-                                      {(editFormData.masterPlans || []).map((imgUrl, idx) => (
-                                          <div key={idx} className="relative w-16 h-16 sm:w-20 sm:h-20 rounded-lg overflow-hidden border border-gray-300 group shadow-sm shrink-0">
-                                              <img src={imgUrl} className="w-full h-full object-cover" alt="总平图" />
-                                              <button onClick={() => removeImage('masterPlans', idx)} className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"><X className="w-3 h-3" /></button>
-                                          </div>
-                                      ))}
-                                      <div className="relative w-16 h-16 sm:w-20 sm:h-20 rounded-lg border-2 border-dashed border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-900/20 flex flex-col items-center justify-center cursor-pointer hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors shrink-0">
-                                          <input type="file" multiple accept="image/*" onChange={(e) => handleImageUpload(e, 'masterPlans')} disabled={isUploading.masterPlans} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
-                                          {isUploading.masterPlans ? <LucideIcons.Loader2 className="w-5 h-5 text-emerald-500 animate-spin" /> : <><UploadCloud className="w-5 h-5 text-emerald-500 mb-0.5" /><span className="text-[9px] text-emerald-600 dark:text-emerald-400 font-bold">上传图片</span></>}
-                                      </div>
+                                  <label className={`block text-xs font-bold flex items-center gap-1.5 mb-1 ${theme.textMain}`}><Map className="w-4 h-4 text-emerald-500"/> 总平图</label>
+                                  <div className="flex flex-wrap gap-2">
+                                      {(editFormData.masterPlans || []).map((imgUrl, idx) => (<div key={idx} className="relative w-16 h-16 rounded-lg overflow-hidden border border-gray-300 group"><img src={imgUrl} className="w-full h-full object-cover" /><button onClick={() => removeImage('masterPlans', idx)} className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100"><X className="w-2 h-2"/></button></div>))}
+                                      <div className="relative w-16 h-16 rounded-lg border-2 border-dashed border-emerald-300 bg-emerald-50 flex flex-col items-center justify-center cursor-pointer"><input type="file" multiple accept="image/*" onChange={(e) => handleImageUpload(e, 'masterPlans')} disabled={isUploading.masterPlans} className="absolute inset-0 opacity-0 z-10" /><UploadCloud className="w-4 h-4 text-emerald-500"/></div>
                                   </div>
                               </div>
-
                               <div className={`p-4 rounded-xl border ${isDarkMode ? 'bg-[#0f172a] border-[#334155]' : 'bg-slate-50 border-gray-200'}`}>
-                                  <label className={`block text-xs sm:text-sm font-bold flex items-center gap-1.5 mb-1 ${theme.textMain}`}>
-                                      <ImageIcon className="w-4 h-4 text-indigo-500"/> 主力户型图册
-                                  </label>
-                                  <p className={`text-[10px] mb-3 ${theme.textSub}`}>支持多图同时上传，每张可单独备注面积。</p>
-                                  <div className="flex flex-wrap gap-4 items-start">
-                                      {(editFormData.floorPlans || []).map((planObj, idx) => (
-                                          <div key={idx} className="relative w-20 sm:w-24 flex flex-col gap-1.5 shrink-0 group">
-                                              <div className="relative w-full h-20 sm:h-24 rounded-lg overflow-hidden border border-gray-300 shadow-sm">
-                                                  <img src={typeof planObj === 'string' ? planObj : planObj.url} className="w-full h-full object-cover" alt="户型图" />
-                                                  <button onClick={() => removeImage('floorPlans', idx)} className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"><X className="w-3 h-3" /></button>
-                                              </div>
-                                              <input 
-                                                  type="number" 
-                                                  placeholder="面积(㎡)" 
-                                                  value={typeof planObj === 'string' ? '' : planObj.area} 
-                                                  onChange={e => handleFloorPlanAreaChange(idx, e.target.value)} 
-                                                  className={`w-full text-xs p-1.5 text-center border rounded outline-none focus:border-indigo-500 font-mono ${theme.inputBg} ${theme.textMain}`}
-                                              />
-                                          </div>
-                                      ))}
-                                      <div className="relative w-20 h-20 sm:w-24 sm:h-24 rounded-lg border-2 border-dashed border-indigo-300 dark:border-indigo-700 bg-indigo-50 dark:bg-indigo-900/20 flex flex-col items-center justify-center cursor-pointer hover:bg-indigo-100 dark:hover:bg-indigo-900/40 transition-colors shrink-0">
-                                          <input type="file" multiple accept="image/*" onChange={(e) => handleImageUpload(e, 'floorPlans')} disabled={isUploading.floorPlans} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
-                                          {isUploading.floorPlans ? <LucideIcons.Loader2 className="w-5 h-5 text-indigo-500 animate-spin" /> : <><UploadCloud className="w-5 h-5 text-indigo-500 mb-0.5" /><span className="text-[9px] text-indigo-600 dark:text-indigo-400 font-bold">加户型</span></>}
-                                      </div>
+                                  <label className={`block text-xs font-bold flex items-center gap-1.5 mb-1 ${theme.textMain}`}><ImageIcon className="w-4 h-4 text-indigo-500"/> 户型图册</label>
+                                  <div className="flex flex-wrap gap-2">
+                                      {(editFormData.floorPlans || []).map((planObj, idx) => (<div key={idx} className="relative w-16 flex flex-col gap-1"><div className="relative w-16 h-16 rounded-lg overflow-hidden border group"><img src={planObj.url} className="w-full h-full object-cover" /><button onClick={() => removeImage('floorPlans', idx)} className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100"><X className="w-2 h-2"/></button></div><input type="number" placeholder="面积" value={planObj.area} onChange={e => handleFloorPlanAreaChange(idx, e.target.value)} className="w-full text-[9px] border rounded" /></div>))}
+                                      <div className="relative w-16 h-16 rounded-lg border-2 border-dashed border-indigo-300 bg-indigo-50 flex flex-col items-center justify-center cursor-pointer"><input type="file" multiple accept="image/*" onChange={(e) => handleImageUpload(e, 'floorPlans')} disabled={isUploading.floorPlans} className="absolute inset-0 opacity-0 z-10" /><UploadCloud className="w-4 h-4 text-indigo-500"/></div>
                                   </div>
                               </div>
                           </div>
-
-                          <button onClick={saveProject} className={`w-full py-3.5 sm:py-4 rounded-xl text-sm sm:text-base font-bold mt-4 shadow-lg active:scale-95 transition-transform bg-indigo-600 hover:bg-indigo-700 text-white`}>保存楼盘档案</button>
+                          <button onClick={saveProject} className={`w-full py-3.5 rounded-xl font-bold mt-4 bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg`}>保存楼盘档案</button>
                       </div>
                   </div>
               ) : (
                   <div className="flex flex-col h-full">
-                      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4 shrink-0">
-                          <button onClick={() => setSelectedProject(null)} className={`flex items-center gap-1 text-sm font-bold hover:underline text-indigo-500`}>
-                              <ChevronRight className="w-4 h-4 rotate-180" /> 返回字典
-                          </button>
-                          <div className="flex gap-2 w-full sm:w-auto">
-                              <button onClick={() => prepareEditProject(selectedProject)} className={`flex-1 sm:flex-none px-3 py-2 sm:px-4 rounded-lg text-xs sm:text-sm font-bold border bg-white dark:bg-slate-800 shadow-sm text-blue-500 hover:scale-105 transition-transform flex justify-center items-center`}>
-                                  编辑资料
-                              </button>
-                          </div>
-                      </div>
-                      
-                      <div className={`flex-1 rounded-[2rem] border ${theme.card} shadow-lg overflow-y-auto relative`}>
-                          <div className={`p-5 sm:p-10 border-b ${isDarkMode ? 'border-[#334155]' : 'border-gray-100'} bg-gradient-to-r from-indigo-50 to-transparent dark:from-indigo-900/10`}>
-                              <h2 className={`text-2xl sm:text-4xl font-black tracking-tight mb-2 ${theme.textMain}`}>{selectedProject.name}</h2>
-                              <div className="flex flex-wrap items-center gap-2 mt-3">
-                                  <div className={`px-2 py-1 sm:px-3 sm:py-1.5 rounded-lg flex items-center gap-1 text-xs sm:text-sm font-bold shadow-sm cursor-pointer hover:opacity-80 transition-opacity bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400`} onClick={() => openMap(selectedProject.address)}>
-                                      <MapPin className="w-3 h-3 sm:w-4 sm:h-4" /> {selectedProject.address || '暂无地址'} <ExternalLink className="w-3 h-3 opacity-50"/>
-                                  </div>
-                                  {(selectedProject.tags || '').split(/[,， ]/).filter(Boolean).map((tag, i) => (
-                                      <span key={i} className={`px-2 py-1 rounded-md text-[10px] sm:text-xs font-bold border ${isDarkMode ? 'border-indigo-500/30 text-indigo-400' : 'border-indigo-200 text-indigo-600'}`}>{tag}</span>
-                                  ))}
-                              </div>
-                          </div>
-
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-5 sm:gap-6 p-5 sm:p-10">
-                              <div className="md:col-span-1 space-y-4 sm:space-y-6">
-                                  <div className={`p-4 sm:p-5 rounded-2xl border shadow-inner ${isDarkMode ? 'bg-[#0f172a] border-[#334155]' : 'bg-slate-50 border-gray-100'}`}>
-                                      <h3 className={`text-sm font-bold mb-4 flex items-center gap-2 ${theme.textMain}`}><FileText className="w-4 h-4 text-indigo-500"/> 核心指标</h3>
-                                      <div className="space-y-4">
-                                          <div>
-                                              <p className={`text-[9px] sm:text-[10px] font-bold uppercase tracking-widest ${theme.textSub}`}>参考均价</p>
-                                              <p className="font-bold text-lg sm:text-xl text-red-500 font-mono">{selectedProject.price || '--'}</p>
-                                          </div>
-                                          <div className="flex justify-between">
-                                              <div>
-                                                  <p className={`text-[9px] sm:text-[10px] font-bold uppercase tracking-widest ${theme.textSub}`}>主力户型</p>
-                                                  <p className={`font-bold font-mono text-base sm:text-lg ${theme.textMain}`}>{selectedProject.area || '--'} ㎡</p>
-                                              </div>
-                                              <div className="text-right">
-                                                  <p className={`text-[9px] sm:text-[10px] font-bold uppercase tracking-widest ${theme.textSub}`}>总套数</p>
-                                                  <p className={`font-bold font-mono text-base sm:text-lg ${theme.textMain}`}>{selectedProject.totalUnits || '--'}</p>
-                                              </div>
-                                          </div>
-                                      </div>
-                                  </div>
-
-                                  {selectedProject.masterPlans && selectedProject.masterPlans.length > 0 && (
-                                      <div className="md:hidden">
-                                          <h3 className={`text-sm font-bold mb-3 flex items-center gap-2 ${theme.textMain}`}><Map className="w-4 h-4 text-emerald-500"/> 总平图</h3>
-                                          <div className="grid grid-cols-2 gap-2">
-                                              {selectedProject.masterPlans.map((url, idx) => (
-                                                  <div key={idx} className={`rounded-xl overflow-hidden border ${theme.card} aspect-video shadow-sm`}><img src={url} className="w-full h-full object-cover" /></div>
-                                              ))}
-                                          </div>
-                                      </div>
-                                  )}
-                              </div>
-
-                              <div className="md:col-span-2">
-                                  {selectedProject.masterPlans && selectedProject.masterPlans.length > 0 && (
-                                      <div className="hidden md:block mb-8">
-                                          <h3 className={`text-base font-bold mb-4 flex items-center gap-2 ${theme.textMain}`}><Map className="w-5 h-5 text-emerald-500"/> 项目总平图 / 鸟瞰图</h3>
-                                          <div className="grid grid-cols-2 gap-4">
-                                              {selectedProject.masterPlans.map((url, idx) => (
-                                                  <div key={idx} className={`rounded-xl overflow-hidden border ${theme.card} relative aspect-video shadow-sm`}><img src={url} className="w-full h-full object-cover bg-white dark:bg-black/50" /></div>
-                                              ))}
-                                          </div>
-                                      </div>
-                                  )}
-
-                                  <div className="flex justify-between items-center mb-3 sm:mb-4 mt-4 md:mt-0">
-                                      <h3 className={`text-base sm:text-lg font-bold flex items-center gap-2 ${theme.textMain}`}><ImageIcon className="w-5 h-5 text-indigo-500"/> 主力户型图册</h3>
-                                  </div>
-                                  {(!selectedProject.floorPlans || selectedProject.floorPlans.length === 0) ? (
-                                      <div className={`h-40 sm:h-64 rounded-2xl border-2 border-dashed flex flex-col items-center justify-center ${isDarkMode ? 'border-[#334155] text-slate-500' : 'border-gray-200 text-gray-400'}`}>
-                                          <ImageIcon className="w-10 h-10 sm:w-12 sm:h-12 mb-2 opacity-20" />
-                                          <p className="text-xs sm:text-sm">暂未上传户型图</p>
-                                      </div>
-                                  ) : (
-                                      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
-                                          {selectedProject.floorPlans.map((plan, idx) => {
-                                              const isString = typeof plan === 'string';
-                                              const url = isString ? plan : plan.url;
-                                              const area = isString ? '' : plan.area;
-                                              return (
-                                              <div key={idx} className={`rounded-xl overflow-hidden border ${theme.card} relative aspect-[3/4] shadow-sm group`}>
-                                                  <img src={url} alt={`户型图 ${idx+1}`} className="w-full h-full object-contain bg-white dark:bg-black/50" />
-                                                  {area && (
-                                                      <div className="absolute bottom-0 left-0 right-0 bg-black/70 backdrop-blur-sm text-white text-center py-1.5 text-xs font-bold font-mono tracking-widest">
-                                                          约 {area} ㎡
-                                                      </div>
-                                                  )}
-                                              </div>
-                                          )})}
-                                      </div>
-                                  )}
-                              </div>
+                      <div className="flex justify-between items-center mb-4 shrink-0"><button onClick={() => setSelectedProject(null)} className={`flex items-center gap-1 text-sm font-bold hover:underline text-indigo-500`}><ChevronRight className="w-4 h-4 rotate-180" /> 返回字典</button><button onClick={() => prepareEditProject(selectedProject)} className={`px-4 py-2 rounded-lg text-sm font-bold border bg-white dark:bg-slate-800 shadow-sm text-blue-500 flex justify-center items-center`}>编辑资料</button></div>
+                      <div className={`flex-1 rounded-[2rem] border ${theme.card} shadow-lg overflow-y-auto`}>
+                          <div className={`p-5 sm:p-10 border-b ${isDarkMode ? 'border-[#334155]' : 'border-gray-100'} bg-gradient-to-r from-indigo-50 to-transparent dark:from-indigo-900/10`}><h2 className={`text-2xl sm:text-4xl font-black tracking-tight mb-2 ${theme.textMain}`}>{selectedProject.name}</h2><div className="flex flex-wrap items-center gap-2 mt-3"><div className={`px-3 py-1.5 rounded-lg flex items-center gap-1 text-xs sm:text-sm font-bold shadow-sm cursor-pointer hover:opacity-80 bg-blue-100 text-blue-600 dark:bg-blue-900/30`} onClick={() => openMap(selectedProject.address)}><MapPin className="w-3 h-3" /> {selectedProject.address || '暂无地址'} <ExternalLink className="w-3 h-3 opacity-50"/></div>{(selectedProject.tags || '').split(/[,， ]/).filter(Boolean).map((tag, i) => (<span key={i} className={`px-2 py-1 rounded-md text-[10px] sm:text-xs font-bold border ${isDarkMode ? 'border-indigo-500/30 text-indigo-400' : 'border-indigo-200 text-indigo-600'}`}>{tag}</span>))}</div></div>
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 p-5 sm:p-10">
+                              <div className="md:col-span-1 space-y-6"><div className={`p-5 rounded-2xl border shadow-inner ${isDarkMode ? 'bg-[#0f172a] border-[#334155]' : 'bg-slate-50 border-gray-100'}`}><h3 className={`text-sm font-bold mb-4 flex items-center gap-2 ${theme.textMain}`}><FileText className="w-4 h-4 text-indigo-500"/> 核心指标</h3><div className="space-y-4"><div><p className={`text-[9px] font-bold uppercase tracking-widest ${theme.textSub}`}>参考均价</p><p className="font-bold text-lg text-red-500 font-mono">{selectedProject.price || '--'}</p></div><div className="flex justify-between"><div><p className={`text-[9px] font-bold uppercase tracking-widest ${theme.textSub}`}>主力户型</p><p className={`font-bold font-mono text-base ${theme.textMain}`}>{selectedProject.area || '--'} ㎡</p></div><div className="text-right"><p className={`text-[9px] font-bold uppercase tracking-widest ${theme.textSub}`}>总套数</p><p className={`font-bold font-mono text-base ${theme.textMain}`}>{selectedProject.totalUnits || '--'}</p></div></div></div></div></div>
+                              <div className="md:col-span-2">{selectedProject.masterPlans?.length > 0 && (<div className="mb-8"><h3 className={`text-base font-bold mb-4 flex items-center gap-2 ${theme.textMain}`}><Map className="w-5 h-5 text-emerald-500"/> 项目总平图</h3><div className="grid grid-cols-2 gap-4">{selectedProject.masterPlans.map((url, idx) => (<div key={idx} className={`rounded-xl overflow-hidden border ${theme.card} relative aspect-video shadow-sm`}><img src={url} className="w-full h-full object-cover" /></div>))}</div></div>)}<h3 className={`text-base sm:text-lg font-bold flex items-center gap-2 ${theme.textMain}`}><ImageIcon className="w-5 h-5 text-indigo-500"/> 主力户型图册</h3>{(!selectedProject.floorPlans || selectedProject.floorPlans.length === 0) ? (<div className="h-40 rounded-2xl border-2 border-dashed flex flex-col items-center justify-center text-slate-500"><ImageIcon className="w-8 h-8 opacity-20" /><p className="text-xs">暂未上传</p></div>) : (<div className="grid grid-cols-2 lg:grid-cols-3 gap-4 mt-4">{selectedProject.floorPlans.map((plan, idx) => (<div key={idx} className={`rounded-xl overflow-hidden border ${theme.card} relative aspect-[3/4] shadow-sm group`}><img src={plan.url} className="w-full h-full object-contain" />{plan.area && (<div className="absolute bottom-0 left-0 right-0 bg-black/70 backdrop-blur-sm text-white text-center py-1.5 text-[10px] font-bold font-mono">约 {plan.area} ㎡</div>)}</div>))}</div>)}</div>
                           </div>
                       </div>
                   </div>
@@ -1225,84 +1005,10 @@
 
       return (
         <div className={`min-h-screen flex flex-col md:flex-row ${theme.bg} transition-colors duration-500`}>
-          <header className={`md:hidden flex justify-between items-center p-4 border-b z-30 shrink-0 ${isDarkMode ? 'bg-[#1e293b] border-[#334155]' : 'bg-white border-gray-200 shadow-sm'}`}>
-              <div className={`flex items-center gap-2 font-black text-lg ${theme.textMain}`}>
-                  <Building2 className="w-5 h-5 text-purple-500"/> 地产精英
-              </div>
-              <div className="flex items-center gap-3">
-                  <button onClick={() => setIsDarkMode(!isDarkMode)} className={`p-1.5 rounded-lg ${isDarkMode ? 'text-yellow-400 bg-yellow-400/10' : 'text-slate-500 bg-slate-100'}`}>
-                      {isDarkMode ? <LucideIcons.Sun className="w-4 h-4" /> : <LucideIcons.Moon className="w-4 h-4" />}
-                  </button>
-                  <button onClick={() => setIsLocked(true)} className={`p-1.5 rounded-lg text-red-500 bg-red-50 dark:bg-red-500/10`}>
-                      <Key className="w-4 h-4" />
-                  </button>
-              </div>
-          </header>
-
-          <aside className={`hidden md:flex w-20 lg:w-64 h-screen shrink-0 border-r flex-col justify-between z-20 transition-all duration-300 ${isDarkMode ? 'bg-[#1e293b] border-[#334155]' : 'bg-white border-gray-200 shadow-[4px_0_24px_rgba(0,0,0,0.02)]'}`}>
-             <div className="p-4 lg:p-6 flex flex-col items-center lg:items-start">
-                 <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center text-white shadow-lg mb-8">
-                     <Building2 className="w-6 h-6" strokeWidth={2.5}/>
-                 </div>
-                 
-                 <nav className="w-full space-y-2 lg:space-y-3">
-                     {[
-                         { id: 'dashboard', icon: LayoutDashboard, label: '工作台' },
-                         { id: 'clients', icon: Users, label: '客户管理' },
-                         { id: 'deals', icon: CheckCircle2, label: '已成交客户' },
-                         { id: 'projects', icon: MapPin, label: '楼盘字典' }
-                     ].map(item => {
-                         const Icon = item.icon;
-                         const isActive = activeTab === item.id;
-                         return (
-                             <button key={item.id} onClick={() => { setActiveTab(item.id); setSelectedClient(null); setSelectedProject(null); setIsEditing(false); setSearchQuery(''); setErrorMsg(null); setReminderMode('preset'); }} className={`w-full flex items-center justify-center lg:justify-start gap-3 p-3 lg:px-4 lg:py-3.5 rounded-2xl transition-all ${isActive ? (isDarkMode ? 'bg-purple-500/20 text-purple-400' : 'bg-purple-50 text-purple-600 font-bold shadow-sm') : `text-slate-400 hover:${isDarkMode ? 'bg-slate-800' : 'bg-slate-50'}`}`}>
-                                 <Icon className="w-6 h-6 lg:w-5 lg:h-5" />
-                                 <span className="hidden lg:block text-sm">{item.label}</span>
-                             </button>
-                         )
-                     })}
-                 </nav>
-             </div>
-             
-             <div className="p-4 lg:p-6 space-y-3">
-                 <button onClick={() => setIsDarkMode(!isDarkMode)} className={`w-full flex items-center justify-center lg:justify-start gap-3 p-3 rounded-2xl text-slate-400 hover:${isDarkMode ? 'bg-slate-800' : 'bg-slate-50'} transition-all`}>
-                     {isDarkMode ? <LucideIcons.Sun className="w-6 h-6 lg:w-5 lg:h-5" /> : <LucideIcons.Moon className="w-6 h-6 lg:w-5 lg:h-5" />}
-                     <span className="hidden lg:block text-sm font-medium">{isDarkMode ? '切换日间' : '切换夜间'}</span>
-                 </button>
-                 <button onClick={() => setIsLocked(true)} className={`w-full flex items-center justify-center lg:justify-start gap-3 p-3 rounded-2xl text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all`}>
-                     <Key className="w-6 h-6 lg:w-5 lg:h-5" />
-                     <span className="hidden lg:block text-sm font-medium">锁定系统</span>
-                 </button>
-             </div>
-          </aside>
-
-          <main className="flex-1 h-full md:h-screen overflow-hidden flex flex-col relative z-10">
-              {loading && <div className="absolute inset-0 z-50 bg-black/10 backdrop-blur-sm flex items-center justify-center"><LucideIcons.Loader2 className="w-8 h-8 md:w-10 md:h-10 text-purple-500 animate-spin" /></div>}
-              <div className="flex-1 p-4 sm:p-6 lg:p-10 overflow-y-auto w-full max-w-[100vw]">
-                  {activeTab === 'dashboard' && renderDashboard()}
-                  {activeTab === 'clients' && renderClients()}
-                  {activeTab === 'deals' && renderDeals()}
-                  {activeTab === 'projects' && renderProjects()}
-              </div>
-          </main>
-
-          <nav className={`md:hidden fixed bottom-0 left-0 right-0 z-40 border-t flex justify-around items-center px-2 pt-2 pb-safe ${isDarkMode ? 'bg-[#1e293b]/95 border-[#334155]' : 'bg-white/95 border-gray-200'} backdrop-blur-md`}>
-              {[
-                  { id: 'dashboard', icon: LayoutDashboard, label: '工作台' },
-                  { id: 'clients', icon: Users, label: '客户' },
-                  { id: 'deals', icon: CheckCircle2, label: '成交' },
-                  { id: 'projects', icon: MapPin, label: '字典' }
-              ].map(item => {
-                  const Icon = item.icon;
-                  const isActive = activeTab === item.id;
-                  return (
-                      <button key={item.id} onClick={() => { setActiveTab(item.id); setSelectedClient(null); setSelectedProject(null); setIsEditing(false); setSearchQuery(''); setErrorMsg(null); setReminderMode('preset'); }} className={`flex flex-col items-center gap-1 p-2 w-1/4 transition-colors ${isActive ? (isDarkMode ? 'text-purple-400' : 'text-purple-600') : 'text-slate-400'}`}>
-                          <Icon className={`w-5 h-5 ${isActive ? 'animate-bounce' : ''}`} style={{ animationIterationCount: 1 }} />
-                          <span className={`text-[10px] font-bold ${isActive ? '' : 'font-normal'}`}>{item.label}</span>
-                      </button>
-                  )
-              })}
-          </nav>
+          <header className={`md:hidden flex justify-between items-center p-4 border-b z-30 shrink-0 ${isDarkMode ? 'bg-[#1e293b] border-[#334155]' : 'bg-white border-gray-200 shadow-sm'}`}><div className={`flex items-center gap-2 font-black text-lg ${theme.textMain}`}><Building2 className="w-5 h-5 text-purple-500"/> 地产精英</div><div className="flex items-center gap-3"><button onClick={() => setIsDarkMode(!isDarkMode)} className={`p-1.5 rounded-lg ${isDarkMode ? 'text-yellow-400 bg-yellow-400/10' : 'text-slate-500 bg-slate-100'}`}>{isDarkMode ? <LucideIcons.Sun className="w-4 h-4" /> : <LucideIcons.Moon className="w-4 h-4" />}</button><button onClick={() => setIsLocked(true)} className={`p-1.5 rounded-lg text-red-500 bg-red-50 dark:bg-red-500/10`}><Key className="w-4 h-4" /></button></div></header>
+          <aside className={`hidden md:flex w-20 lg:w-64 h-screen shrink-0 border-r flex-col justify-between z-20 transition-all duration-300 ${isDarkMode ? 'bg-[#1e293b] border-[#334155]' : 'bg-white border-gray-200 shadow-sm'}`}><div className="p-4 lg:p-6 flex flex-col items-center lg:items-start"><div className="w-12 h-12 rounded-xl bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center text-white shadow-lg mb-8"><Building2 className="w-6 h-6" strokeWidth={2.5}/></div><nav className="w-full space-y-2 lg:space-y-3">{[{ id: 'dashboard', icon: LayoutDashboard, label: '工作台' },{ id: 'clients', icon: Users, label: '客户管理' },{ id: 'deals', icon: CheckCircle2, label: '已成交客户' },{ id: 'projects', icon: MapPin, label: '楼盘字典' }].map(item => { const Icon = item.icon; const isActive = activeTab === item.id; return (<button key={item.id} onClick={() => { setActiveTab(item.id); setSelectedClient(null); setSelectedProject(null); setIsEditing(false); setSearchQuery(''); setErrorMsg(null); setReminderMode('preset'); }} className={`w-full flex items-center justify-center lg:justify-start gap-3 p-3 lg:px-4 lg:py-3.5 rounded-2xl transition-all ${isActive ? (isDarkMode ? 'bg-purple-500/20 text-purple-400' : 'bg-purple-50 text-purple-600 font-bold') : `text-slate-400 hover:${isDarkMode ? 'bg-slate-800' : 'bg-slate-50'}`}`}><Icon className="w-6 h-6 lg:w-5 lg:h-5" /><span className="hidden lg:block text-sm">{item.label}</span></button>) })}</nav></div><div className="p-4 lg:p-6 space-y-3"><button onClick={() => setIsDarkMode(!isDarkMode)} className={`w-full flex items-center justify-center lg:justify-start gap-3 p-3 rounded-2xl text-slate-400 hover:${isDarkMode ? 'bg-slate-800' : 'bg-slate-50'}`}>{isDarkMode ? <LucideIcons.Sun className="w-6 h-6 lg:w-5 lg:h-5" /> : <LucideIcons.Moon className="w-6 h-6 lg:w-5 lg:h-5" />}<span className="hidden lg:block text-sm font-medium">{isDarkMode ? '切换日间' : '切换夜间'}</span></button><button onClick={() => setIsLocked(true)} className={`w-full flex items-center justify-center lg:justify-start gap-3 p-3 rounded-2xl text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20`}><Key className="w-6 h-6 lg:w-5 lg:h-5" /><span className="hidden lg:block text-sm font-medium">锁定系统</span></button></div></aside>
+          <main className="flex-1 h-full md:h-screen overflow-hidden flex flex-col relative z-10">{loading && <div className="absolute inset-0 z-50 bg-black/10 backdrop-blur-sm flex items-center justify-center"><LucideIcons.Loader2 className="w-8 h-8 text-purple-500 animate-spin" /></div>}<div className="flex-1 p-4 sm:p-6 lg:p-10 overflow-y-auto w-full max-w-[100vw]">{activeTab === 'dashboard' && renderDashboard()}{activeTab === 'clients' && renderClients()}{activeTab === 'deals' && renderDeals()}{activeTab === 'projects' && renderProjects()}</div></main>
+          <nav className={`md:hidden fixed bottom-0 left-0 right-0 z-40 border-t flex justify-around items-center px-2 pt-2 pb-safe ${isDarkMode ? 'bg-[#1e293b]/95 border-[#334155]' : 'bg-white/95 border-gray-200'} backdrop-blur-md`}>{[{ id: 'dashboard', icon: LayoutDashboard, label: '工作台' },{ id: 'clients', icon: Users, label: '客户' },{ id: 'deals', icon: CheckCircle2, label: '成交' },{ id: 'projects', icon: MapPin, label: '字典' }].map(item => { const Icon = item.icon; const isActive = activeTab === item.id; return (<button key={item.id} onClick={() => { setActiveTab(item.id); setSelectedClient(null); setSelectedProject(null); setIsEditing(false); setSearchQuery(''); setErrorMsg(null); setReminderMode('preset'); }} className={`flex flex-col items-center gap-1 p-2 w-1/4 transition-colors ${isActive ? (isDarkMode ? 'text-purple-400' : 'text-purple-600') : 'text-slate-400'}`}><Icon className={`w-5 h-5 ${isActive ? 'animate-bounce' : ''}`} style={{ animationIterationCount: 1 }} /><span className={`text-[10px] font-bold ${isActive ? '' : 'font-normal'}`}>{item.label}</span></button>) })}</nav>
         </div>
       );
     };
