@@ -402,7 +402,7 @@
 
       // 修复盲区2：自动后台补登未打开网页时的历史数据缺失（利用隐式 JSONP 拉取腾讯历史 K 线）
       useEffect(() => {
-          if (!user || portfolio.length === 0) return;
+          if (loading || !user) return; // 确保Firebase数据全部加载完毕再执行，避免快照覆盖
 
           const checkAndFillHistoricalData = async () => {
               // 1. 生成最近 90 天内的工作日 (扩大回溯范围，覆盖整个季度，跳过今天)
@@ -421,47 +421,59 @@
               let hasMissing = false;
               ['A', 'US'].forEach(market => {
                   const records = investments[market]?.records || {};
-                  const marketHasPortfolio = portfolio.some(p => p.market === market);
-                  if (marketHasPortfolio) {
-                      recentWorkDays.forEach(dateStr => {
-                          if (records[dateStr] === undefined) hasMissing = true;
-                      });
-                  }
+                  // 无论当前该市场是否有持仓，都强制检查日历完整性
+                  recentWorkDays.forEach(dateStr => {
+                      if (records[dateStr] === undefined) hasMissing = true;
+                  });
               });
 
               if (!hasMissing) return;
 
-              // 3. 构建历史请求 (基于腾讯历史日K接口，无缝规避跨域)
+              // 3. 构建历史请求 (基于腾讯历史日K接口，无缝规避跨域，增加超时与错误捕获)
               const fetchHistory = (code) => {
                   return new Promise((resolve) => {
                       let fetchCode = code.toLowerCase();
                       if (fetchCode.startsWith('hk')) fetchCode = 'hk' + fetchCode.slice(2).toUpperCase();
                       if (fetchCode.startsWith('us')) fetchCode = 'us' + fetchCode.slice(2).toUpperCase();
                       
-                      const varName = `hist_${fetchCode}_${Date.now()}`;
+                      const varName = `hist_${fetchCode}_${Date.now()}_${Math.floor(Math.random()*1000)}`;
                       const script = document.createElement('script');
                       script.src = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?_var=${varName}&param=${fetchCode},day,,,100,qfq`;
                       
-                      script.onload = () => {
-                          const data = window[varName];
-                          const historyMap = {};
-                          if (data && data.data && data.data[fetchCode] && data.data[fetchCode].day) {
-                              const dayData = data.data[fetchCode].day;
-                              // 基于 K 线的“当天收盘 - 前日收盘”计算出真实的单日涨跌额
-                              for (let i = 1; i < dayData.length; i++) {
-                                  const dateVal = dayData[i][0];
-                                  const closePrice = parseFloat(dayData[i][2]);
-                                  const prevClosePrice = parseFloat(dayData[i-1][2]);
-                                  historyMap[dateVal] = closePrice - prevClosePrice;
-                              }
-                          }
-                          resolve({ code, historyMap });
-                          delete window[varName];
+                      let isResolved = false;
+                      const finish = (result) => {
+                          if (isResolved) return;
+                          isResolved = true;
                           if (document.head.contains(script)) document.head.removeChild(script);
+                          try { delete window[varName]; } catch(e) {}
+                          resolve(result);
+                      };
+
+                      const timeoutId = setTimeout(() => finish({ code, historyMap: {} }), 5000); // 5秒超时熔断
+
+                      script.onload = () => {
+                          clearTimeout(timeoutId);
+                          try {
+                              const data = window[varName];
+                              const historyMap = {};
+                              if (data && data.data && data.data[fetchCode] && data.data[fetchCode].day) {
+                                  const dayData = data.data[fetchCode].day;
+                                  // 基于 K 线的“当天收盘 - 前日收盘”计算出真实的单日涨跌额
+                                  for (let i = 1; i < dayData.length; i++) {
+                                      const dateVal = dayData[i][0];
+                                      const closePrice = parseFloat(dayData[i][2]);
+                                      const prevClosePrice = parseFloat(dayData[i-1][2]);
+                                      historyMap[dateVal] = closePrice - prevClosePrice;
+                                  }
+                              }
+                              finish({ code, historyMap });
+                          } catch (e) {
+                              finish({ code, historyMap: {} });
+                          }
                       };
                       script.onerror = () => {
-                          resolve({ code, historyMap: {} });
-                          if (document.head.contains(script)) document.head.removeChild(script);
+                          clearTimeout(timeoutId);
+                          finish({ code, historyMap: {} });
                       };
                       document.head.appendChild(script);
                   });
@@ -469,7 +481,10 @@
 
               // 4. 并发拉取并计算缺省天数中，您的所有持仓对应的总缺失盈亏
               const codes = [...new Set(portfolio.map(p => p.code))];
-              const results = await Promise.all(codes.map(code => fetchHistory(code)));
+              let results = [];
+              if (codes.length > 0) {
+                  results = await Promise.all(codes.map(code => fetchHistory(code)));
+              }
               
               const marketChangesByDate = { A: {}, US: {} };
               portfolio.forEach(item => {
@@ -492,15 +507,13 @@
                   let marketUpdated = false;
                   const newRecords = { ...records };
 
-                  if (portfolio.some(p => p.market === market)) {
-                      recentWorkDays.forEach(dateStr => {
-                          if (newRecords[dateStr] === undefined) {
-                              // 如果有取到真实的历史变动金额则填入，否则填 0 (表示休市或无此票数据)
-                              newRecords[dateStr] = marketChangesByDate[market][dateStr] !== undefined ? marketChangesByDate[market][dateStr] : 0;
-                              marketUpdated = true;
-                          }
-                      });
-                  }
+                  recentWorkDays.forEach(dateStr => {
+                      if (newRecords[dateStr] === undefined) {
+                          // 如果有取到真实的历史变动金额则填入，即使空仓也填0兜底防止日历空白格
+                          newRecords[dateStr] = marketChangesByDate[market][dateStr] !== undefined ? marketChangesByDate[market][dateStr] : 0;
+                          marketUpdated = true;
+                      }
+                  });
 
                   if (marketUpdated) {
                       nextInvestments[market] = { ...nextInvestments[market], records: newRecords };
@@ -515,7 +528,7 @@
 
           checkAndFillHistoricalData();
           // eslint-disable-next-line react-hooks/exhaustive-deps
-      }, [portfolio.length, user]);
+      }, [loading, user]);
 
       useEffect(() => {
           const fetchPolymarket = async () => {
