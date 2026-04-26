@@ -405,10 +405,10 @@
           if (!user || portfolio.length === 0) return;
 
           const checkAndFillHistoricalData = async () => {
-              // 1. 生成最近 10 天内的工作日 (跳过今天，今天由上面的实时逻辑负责)
+              // 1. 生成最近 90 天内的工作日 (扩大回溯范围，覆盖整个季度，跳过今天)
               const todayObj = new Date();
               const recentWorkDays = [];
-              for (let i = 1; i <= 10; i++) {
+              for (let i = 1; i <= 90; i++) {
                   const d = new Date(todayObj);
                   d.setDate(todayObj.getDate() - i);
                   const dayOfWeek = d.getDay();
@@ -440,7 +440,7 @@
                       
                       const varName = `hist_${fetchCode}_${Date.now()}`;
                       const script = document.createElement('script');
-                      script.src = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?_var=${varName}&param=${fetchCode},day,,,15,qfq`;
+                      script.src = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?_var=${varName}&param=${fetchCode},day,,,100,qfq`;
                       
                       script.onload = () => {
                           const data = window[varName];
