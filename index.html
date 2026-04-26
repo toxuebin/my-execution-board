@@ -357,34 +357,165 @@
           return v.toFixed(0);
       };
 
-      const autoSyncPnLValue = useMemo(() => {
-          if (portfolio.length === 0 || stockData.length === 0) return 0;
-          let todayTotal = 0;
-          portfolio.filter(p => p.market === investMarket).forEach(item => {
+      // 修复盲区1：让A股和美股同时在后台计算和同步实时盈亏（抛弃了只听当前 investMarket 的局限）
+      const autoSyncPnLValues = useMemo(() => {
+          if (portfolio.length === 0 || stockData.length === 0) return { A: 0, US: 0 };
+          let totals = { A: 0, US: 0 };
+          portfolio.forEach(item => {
               const sData = stockData.find(s => s.code === item.code);
-              if (sData) {
+              if (sData && totals[item.market] !== undefined) {
                   const change = parseFloat(sData.change) || 0;
-                  todayTotal += item.quantity * change;
+                  totals[item.market] += item.quantity * change;
               }
           });
-          return todayTotal;
-      }, [portfolio, stockData, investMarket]);
+          return totals;
+      }, [portfolio, stockData]);
 
+      // 实时同步当天的盈亏 (独立保存全域市场)
       useEffect(() => {
-          if (autoSyncPnLValue === 0 || !user) return;
+          if (!user || (autoSyncPnLValues.A === 0 && autoSyncPnLValues.US === 0)) return;
           const today = getTodayDateString();
           const dayOfWeek = new Date().getDay();
+          
           if (dayOfWeek >= 1 && dayOfWeek <= 5) {
-              const currentRecords = investments[investMarket]?.records || {};
-              if (Math.abs((currentRecords[today] || 0) - autoSyncPnLValue) > 0.05) {
-                  const updatedInvestments = { 
-                      ...investments, 
-                      [investMarket]: { ...investments[investMarket], records: { ...currentRecords, [today]: autoSyncPnLValue } } 
-                  };
-                  saveData({ investments: updatedInvestments });
+              let updated = false;
+              let nextInvestments = { ...investments };
+              
+              ['A', 'US'].forEach(market => {
+                  const currentRecords = nextInvestments[market]?.records || {};
+                  const todayValue = autoSyncPnLValues[market];
+                  // 如果记录发生波动（即使原来是0也可以更新真实市值变化）
+                  if (Math.abs((currentRecords[today] || 0) - todayValue) > 0.05) {
+                      nextInvestments[market] = { 
+                          ...nextInvestments[market], 
+                          records: { ...currentRecords, [today]: todayValue } 
+                      };
+                      updated = true;
+                  }
+              });
+
+              if (updated) {
+                  saveData({ investments: nextInvestments });
               }
           }
-      }, [autoSyncPnLValue, user, investMarket]);
+      }, [autoSyncPnLValues, user]);
+
+      // 修复盲区2：自动后台补登未打开网页时的历史数据缺失（利用隐式 JSONP 拉取腾讯历史 K 线）
+      useEffect(() => {
+          if (!user || portfolio.length === 0) return;
+
+          const checkAndFillHistoricalData = async () => {
+              // 1. 生成最近 10 天内的工作日 (跳过今天，今天由上面的实时逻辑负责)
+              const todayObj = new Date();
+              const recentWorkDays = [];
+              for (let i = 1; i <= 10; i++) {
+                  const d = new Date(todayObj);
+                  d.setDate(todayObj.getDate() - i);
+                  const dayOfWeek = d.getDay();
+                  if (dayOfWeek >= 1 && dayOfWeek <= 5) {
+                      recentWorkDays.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+                  }
+              }
+
+              // 2. 检查记录是否有缺失
+              let hasMissing = false;
+              ['A', 'US'].forEach(market => {
+                  const records = investments[market]?.records || {};
+                  const marketHasPortfolio = portfolio.some(p => p.market === market);
+                  if (marketHasPortfolio) {
+                      recentWorkDays.forEach(dateStr => {
+                          if (records[dateStr] === undefined) hasMissing = true;
+                      });
+                  }
+              });
+
+              if (!hasMissing) return;
+
+              // 3. 构建历史请求 (基于腾讯历史日K接口，无缝规避跨域)
+              const fetchHistory = (code) => {
+                  return new Promise((resolve) => {
+                      let fetchCode = code.toLowerCase();
+                      if (fetchCode.startsWith('hk')) fetchCode = 'hk' + fetchCode.slice(2).toUpperCase();
+                      if (fetchCode.startsWith('us')) fetchCode = 'us' + fetchCode.slice(2).toUpperCase();
+                      
+                      const varName = `hist_${fetchCode}_${Date.now()}`;
+                      const script = document.createElement('script');
+                      script.src = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?_var=${varName}&param=${fetchCode},day,,,15,qfq`;
+                      
+                      script.onload = () => {
+                          const data = window[varName];
+                          const historyMap = {};
+                          if (data && data.data && data.data[fetchCode] && data.data[fetchCode].day) {
+                              const dayData = data.data[fetchCode].day;
+                              // 基于 K 线的“当天收盘 - 前日收盘”计算出真实的单日涨跌额
+                              for (let i = 1; i < dayData.length; i++) {
+                                  const dateVal = dayData[i][0];
+                                  const closePrice = parseFloat(dayData[i][2]);
+                                  const prevClosePrice = parseFloat(dayData[i-1][2]);
+                                  historyMap[dateVal] = closePrice - prevClosePrice;
+                              }
+                          }
+                          resolve({ code, historyMap });
+                          delete window[varName];
+                          if (document.head.contains(script)) document.head.removeChild(script);
+                      };
+                      script.onerror = () => {
+                          resolve({ code, historyMap: {} });
+                          if (document.head.contains(script)) document.head.removeChild(script);
+                      };
+                      document.head.appendChild(script);
+                  });
+              };
+
+              // 4. 并发拉取并计算缺省天数中，您的所有持仓对应的总缺失盈亏
+              const codes = [...new Set(portfolio.map(p => p.code))];
+              const results = await Promise.all(codes.map(code => fetchHistory(code)));
+              
+              const marketChangesByDate = { A: {}, US: {} };
+              portfolio.forEach(item => {
+                  const histResult = results.find(r => r.code === item.code);
+                  if (histResult && Object.keys(histResult.historyMap).length > 0) {
+                      Object.keys(histResult.historyMap).forEach(dateStr => {
+                          if (!marketChangesByDate[item.market][dateStr]) marketChangesByDate[item.market][dateStr] = 0;
+                          // 单只股票的历史盈亏 = 历史该日的真实涨跌额 * 你当前的持仓量
+                          marketChangesByDate[item.market][dateStr] += histResult.historyMap[dateStr] * item.quantity;
+                      });
+                  }
+              });
+
+              // 5. 合并回填并保存，彻底消灭历史断层
+              let updated = false;
+              let nextInvestments = { ...investments };
+
+              ['A', 'US'].forEach(market => {
+                  const records = nextInvestments[market]?.records || {};
+                  let marketUpdated = false;
+                  const newRecords = { ...records };
+
+                  if (portfolio.some(p => p.market === market)) {
+                      recentWorkDays.forEach(dateStr => {
+                          if (newRecords[dateStr] === undefined) {
+                              // 如果有取到真实的历史变动金额则填入，否则填 0 (表示休市或无此票数据)
+                              newRecords[dateStr] = marketChangesByDate[market][dateStr] !== undefined ? marketChangesByDate[market][dateStr] : 0;
+                              marketUpdated = true;
+                          }
+                      });
+                  }
+
+                  if (marketUpdated) {
+                      nextInvestments[market] = { ...nextInvestments[market], records: newRecords };
+                      updated = true;
+                  }
+              });
+
+              if (updated) {
+                  saveData({ investments: nextInvestments });
+              }
+          };
+
+          checkAndFillHistoricalData();
+          // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [portfolio.length, user]);
 
       useEffect(() => {
           const fetchPolymarket = async () => {
@@ -1023,7 +1154,7 @@ JSON 字段要求：
                 </div>
                 <div className="flex flex-wrap items-center gap-3 w-full justify-center xl:justify-start">
                   <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full shadow-sm ${isDarkMode ? 'bg-[#1a2c38] border border-[#213743]' : 'bg-white border border-[#d2d2d7]/50'}`}>
-                    <span className={`text-[11px] font-black ${isDarkMode ? 'text-[#34c759]' : 'text-blue-600'}`}>{["周日","周一","周二","周三","周4","周五","周六"][currentTime.getDay()]}</span>
+                    <span className={`text-[11px] font-black ${isDarkMode ? 'text-[#34c759]' : 'text-blue-600'}`}>{["周日","周一","周二","周三","周四","周五","周六"][currentTime.getDay()]}</span>
                     <span className={`text-xs font-bold font-mono ${theme.textMain}`}>{currentTime.toLocaleTimeString('zh-CN', { hour12: false })}</span>
                   </div>
                   <div className={`flex items-center gap-3 px-4 py-1.5 rounded-full shadow-sm ${theme.card}`} title={`嘉兴实时天气: ${weather.desc}`}>
@@ -1040,7 +1171,6 @@ JSON 字段要求：
                 
                 {/* === CRM 独立系统入口 (含环境防呆提示) === */}
                 <a href="./crm.html" target="_blank" rel="noopener noreferrer" onClick={(e) => {
-                    // 如果在本地预览或 AI 沙盒环境中，拦截并提示用户
                     if (window.location.hostname.includes('gemini.google.com') || window.location.href.includes('about:blank') || window.location.href.includes('blob:')) {
                         e.preventDefault();
                         alert('【沙盒预览限制】\n\nAI 预览环境无法进行页面间跳转。\n\n如需正常使用，请将刚才生成的 crm.html 和本页的 index.html 一同上传至您的 GitHub Pages (toxuebin.github.io) 根目录即可！');
