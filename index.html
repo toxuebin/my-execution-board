@@ -357,21 +357,23 @@
           return v.toFixed(0);
       };
 
-      // 修复盲区1：让A股和美股同时在后台计算和同步实时盈亏（抛弃了只听当前 investMarket 的局限）
+      // 自动计算当前全域双线的日盈亏（无论停留在哪个 Tab，A股和美股都同时在后台计算）
       const autoSyncPnLValues = useMemo(() => {
           if (portfolio.length === 0 || stockData.length === 0) return { A: 0, US: 0 };
           let totals = { A: 0, US: 0 };
           portfolio.forEach(item => {
               const sData = stockData.find(s => s.code === item.code);
-              if (sData && totals[item.market] !== undefined) {
+              if (sData) {
                   const change = parseFloat(sData.change) || 0;
-                  totals[item.market] += item.quantity * change;
+                  if (totals[item.market] !== undefined) {
+                      totals[item.market] += item.quantity * change;
+                  }
               }
           });
           return totals;
       }, [portfolio, stockData]);
 
-      // 实时同步当天的盈亏 (独立保存全域市场)
+      // 实时保存当天的值到记录（双市场同时更新）
       useEffect(() => {
           if (!user || (autoSyncPnLValues.A === 0 && autoSyncPnLValues.US === 0)) return;
           const today = getTodayDateString();
@@ -384,7 +386,7 @@
               ['A', 'US'].forEach(market => {
                   const currentRecords = nextInvestments[market]?.records || {};
                   const todayValue = autoSyncPnLValues[market];
-                  // 如果记录发生波动（即使原来是0也可以更新真实市值变化）
+                  // 只有当数字有实质性变化时才更新，防止死循环写入
                   if (Math.abs((currentRecords[today] || 0) - todayValue) > 0.05) {
                       nextInvestments[market] = { 
                           ...nextInvestments[market], 
@@ -400,12 +402,12 @@
           }
       }, [autoSyncPnLValues, user]);
 
-      // 修复盲区2：自动后台补登未打开网页时的历史数据缺失（利用隐式 JSONP 拉取腾讯历史 K 线）
+      // 终极修复方案：后台静默遍历最近 90 天并“强制覆盖所有被错记为 0 的缓存毒药”
       useEffect(() => {
-          if (loading || !user) return; // 确保Firebase数据全部加载完毕再执行，避免快照覆盖
+          // 只有等云端数据确切加载完毕，且真有持仓的情况，才开始校验计算，以防死循环
+          if (loading || !user || portfolio.length === 0) return;
 
           const checkAndFillHistoricalData = async () => {
-              // 1. 生成最近 90 天内的工作日 (扩大回溯范围，覆盖整个季度，跳过今天)
               const todayObj = new Date();
               const recentWorkDays = [];
               for (let i = 1; i <= 90; i++) {
@@ -417,19 +419,7 @@
                   }
               }
 
-              // 2. 检查记录是否有缺失
-              let hasMissing = false;
-              ['A', 'US'].forEach(market => {
-                  const records = investments[market]?.records || {};
-                  // 无论当前该市场是否有持仓，都强制检查日历完整性
-                  recentWorkDays.forEach(dateStr => {
-                      if (records[dateStr] === undefined) hasMissing = true;
-                  });
-              });
-
-              if (!hasMissing) return;
-
-              // 3. 构建历史请求 (基于腾讯历史日K接口，无缝规避跨域，增加超时与错误捕获)
+              // 拉取历史的核心函数 (穿透解析腾讯的前复权 qfqday)
               const fetchHistory = (code) => {
                   return new Promise((resolve) => {
                       let fetchCode = code.toLowerCase();
@@ -449,21 +439,26 @@
                           resolve(result);
                       };
 
-                      const timeoutId = setTimeout(() => finish({ code, historyMap: {} }), 5000); // 5秒超时熔断
+                      const timeoutId = setTimeout(() => finish({ code, historyMap: {} }), 5000);
 
                       script.onload = () => {
                           clearTimeout(timeoutId);
                           try {
                               const data = window[varName];
                               const historyMap = {};
-                              if (data && data.data && data.data[fetchCode] && data.data[fetchCode].day) {
-                                  const dayData = data.data[fetchCode].day;
-                                  // 基于 K 线的“当天收盘 - 前日收盘”计算出真实的单日涨跌额
-                                  for (let i = 1; i < dayData.length; i++) {
-                                      const dateVal = dayData[i][0];
-                                      const closePrice = parseFloat(dayData[i][2]);
-                                      const prevClosePrice = parseFloat(dayData[i-1][2]);
-                                      historyMap[dateVal] = closePrice - prevClosePrice;
+                              if (data && data.data && data.data[fetchCode]) {
+                                  const stockDataObj = data.data[fetchCode];
+                                  // 这里是核心：使用 qfqday（前复权）才能完美兼容腾讯的接口，获取真实历史
+                                  const dayData = stockDataObj.qfqday || stockDataObj.day;
+                                  if (dayData && Array.isArray(dayData)) {
+                                      for (let i = 1; i < dayData.length; i++) {
+                                          const dateVal = dayData[i][0];
+                                          const closePrice = parseFloat(dayData[i][2]);
+                                          const prevClosePrice = parseFloat(dayData[i-1][2]);
+                                          if (!isNaN(closePrice) && !isNaN(prevClosePrice)) {
+                                              historyMap[dateVal] = closePrice - prevClosePrice;
+                                          }
+                                      }
                                   }
                               }
                               finish({ code, historyMap });
@@ -479,7 +474,6 @@
                   });
               };
 
-              // 4. 并发拉取并计算缺省天数中，您的所有持仓对应的总缺失盈亏
               const codes = [...new Set(portfolio.map(p => p.code))];
               let results = [];
               if (codes.length > 0) {
@@ -491,14 +485,13 @@
                   const histResult = results.find(r => r.code === item.code);
                   if (histResult && Object.keys(histResult.historyMap).length > 0) {
                       Object.keys(histResult.historyMap).forEach(dateStr => {
+                          if (marketChangesByDate[item.market] === undefined) marketChangesByDate[item.market] = {};
                           if (!marketChangesByDate[item.market][dateStr]) marketChangesByDate[item.market][dateStr] = 0;
-                          // 单只股票的历史盈亏 = 历史该日的真实涨跌额 * 你当前的持仓量
                           marketChangesByDate[item.market][dateStr] += histResult.historyMap[dateStr] * item.quantity;
                       });
                   }
               });
 
-              // 5. 合并回填并保存，彻底消灭历史断层
               let updated = false;
               let nextInvestments = { ...investments };
 
@@ -508,10 +501,21 @@
                   const newRecords = { ...records };
 
                   recentWorkDays.forEach(dateStr => {
-                      if (newRecords[dateStr] === undefined) {
-                          // 如果有取到真实的历史变动金额则填入，即使空仓也填0兜底防止日历空白格
-                          newRecords[dateStr] = marketChangesByDate[market][dateStr] !== undefined ? marketChangesByDate[market][dateStr] : 0;
-                          marketUpdated = true;
+                      const existingVal = newRecords[dateStr];
+                      const histVal = marketChangesByDate[market] && marketChangesByDate[market][dateStr];
+
+                      // 最核心修复点：强制洗盘
+                      // 如果原来没有记录，或者【原来被错误兜底成了 0】的
+                      if (existingVal === undefined || existingVal === 0) {
+                          // 只要我们取到了真实的涨跌幅（且不为0），直接强行覆盖毒药缓存！
+                          if (histVal !== undefined && Math.abs(histVal) > 0.001) {
+                              newRecords[dateStr] = histVal;
+                              marketUpdated = true;
+                          } else if (existingVal === undefined) {
+                              // 如果连腾讯接口也没回传数据(比如真是节假日休市)，且本地又没记录，那就安全兜底为 0
+                              newRecords[dateStr] = 0;
+                              marketUpdated = true;
+                          }
                       }
                   });
 
@@ -528,7 +532,7 @@
 
           checkAndFillHistoricalData();
           // eslint-disable-next-line react-hooks/exhaustive-deps
-      }, [loading, user]);
+      }, [loading, user, portfolio.length]);
 
       useEffect(() => {
           const fetchPolymarket = async () => {
@@ -1182,7 +1186,6 @@ JSON 字段要求：
               <div className="flex flex-wrap items-center gap-3">
                 <button onClick={() => setShowCalc(true)} className={`p-3 rounded-full flex items-center justify-center shadow-md active:scale-90 ${isDarkMode ? 'bg-[#213743] text-[#34c759]' : 'bg-white text-blue-600'}`}><Calculator className="w-4 h-4" /></button>
                 
-                {/* === CRM 独立系统入口 (含环境防呆提示) === */}
                 <a href="./crm.html" target="_blank" rel="noopener noreferrer" onClick={(e) => {
                     if (window.location.hostname.includes('gemini.google.com') || window.location.href.includes('about:blank') || window.location.href.includes('blob:')) {
                         e.preventDefault();
