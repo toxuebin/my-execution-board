@@ -357,7 +357,6 @@
           return v.toFixed(0);
       };
 
-      // 自动计算当前全域双线的日盈亏（无论停留在哪个 Tab，A股和美股都同时在后台计算）
       const autoSyncPnLValues = useMemo(() => {
           if (portfolio.length === 0 || stockData.length === 0) return { A: 0, US: 0 };
           let totals = { A: 0, US: 0 };
@@ -373,7 +372,6 @@
           return totals;
       }, [portfolio, stockData]);
 
-      // 实时保存当天的值到记录（双市场同时更新）
       useEffect(() => {
           if (!user || (autoSyncPnLValues.A === 0 && autoSyncPnLValues.US === 0)) return;
           const today = getTodayDateString();
@@ -386,7 +384,6 @@
               ['A', 'US'].forEach(market => {
                   const currentRecords = nextInvestments[market]?.records || {};
                   const todayValue = autoSyncPnLValues[market];
-                  // 只有当数字有实质性变化时才更新，防止死循环写入
                   if (Math.abs((currentRecords[today] || 0) - todayValue) > 0.05) {
                       nextInvestments[market] = { 
                           ...nextInvestments[market], 
@@ -402,9 +399,7 @@
           }
       }, [autoSyncPnLValues, user]);
 
-      // 终极修复方案：后台静默遍历最近 90 天并“强制覆盖所有被错记为 0 的缓存毒药”
       useEffect(() => {
-          // 只有等云端数据确切加载完毕，且真有持仓的情况，才开始校验计算，以防死循环
           if (loading || !user || portfolio.length === 0) return;
 
           const checkAndFillHistoricalData = async () => {
@@ -419,7 +414,6 @@
                   }
               }
 
-              // 拉取历史的核心函数 (双擎驱动：A股用腾讯前复权，美股优先用 Finnhub 确保成功率)
               const fetchHistory = async (code) => {
                   let isUS = code.toLowerCase().startsWith('us');
                   const historyMap = {};
@@ -429,13 +423,11 @@
                           const symbol = code.slice(2).toUpperCase();
                           const to = Math.floor(Date.now() / 1000);
                           const from = to - (100 * 24 * 60 * 60);
-                          // 借用已有的 Finnhub API Key 调取精准日K
                           const res = await fetch(`https://finnhub.io/api/v1/stock/candle?symbol=${symbol}&resolution=D&from=${from}&to=${to}&token=d6k0h3pr01qkvh5rmhcgd6k0h3pr01qkvh5rmhd0`);
                           if (res.ok) {
                               const data = await res.json();
                               if (data && data.s === 'ok' && data.c && data.t) {
                                   for (let i = 1; i < data.c.length; i++) {
-                                      // 强制使用 UTC 解析，避免中国时区造成的日期偏移
                                       const dateObj = new Date(data.t[i] * 1000);
                                       const yyyy = dateObj.getUTCFullYear();
                                       const mm = String(dateObj.getUTCMonth() + 1).padStart(2, '0');
@@ -454,13 +446,11 @@
                       }
                   }
 
-                  // 腾讯兜底/A股主渠道
                   return new Promise((resolve) => {
                       let fetchCode = code.toLowerCase();
                       if (fetchCode.startsWith('hk')) fetchCode = 'hk' + fetchCode.slice(2).toUpperCase();
                       if (fetchCode.startsWith('us')) fetchCode = 'us' + fetchCode.slice(2).toUpperCase();
                       
-                      // 美股不支持 qfq，强行请求会导致腾讯接口返回空数据，所以做严格区分
                       const paramStr = isUS ? `${fetchCode},day,,,100` : `${fetchCode},day,,,100,qfq`;
                       const varName = `hist_${fetchCode}_${Date.now()}_${Math.floor(Math.random()*1000)}`;
                       const script = document.createElement('script');
@@ -482,7 +472,6 @@
                           try {
                               const data = window[varName];
                               if (data && data.data) {
-                                  // 动态匹配键名，防止腾讯接口大小写问题
                                   const dataKeys = Object.keys(data.data);
                                   const matchKey = dataKeys.find(k => k.toLowerCase() === fetchCode.toLowerCase());
                                   if (matchKey) {
@@ -543,15 +532,11 @@
                       const existingVal = newRecords[dateStr];
                       const histVal = marketChangesByDate[market] && marketChangesByDate[market][dateStr];
 
-                      // 最核心修复点：强制洗盘
-                      // 如果原来没有记录，或者【原来被错误兜底成了 0】的
                       if (existingVal === undefined || existingVal === 0) {
-                          // 只要我们取到了真实的涨跌幅（且不为0），直接强行覆盖毒药缓存！
                           if (histVal !== undefined && Math.abs(histVal) > 0.001) {
                               newRecords[dateStr] = histVal;
                               marketUpdated = true;
                           } else if (existingVal === undefined) {
-                              // 如果连腾讯接口也没回传数据(比如真是节假日休市)，且本地又没记录，那就安全兜底为 0
                               newRecords[dateStr] = 0;
                               marketUpdated = true;
                           }
@@ -666,7 +651,7 @@
                   const maxPages = Math.max(1, Math.ceil(polyMarkets.length / 5));
                   return (prev + 1) % maxPages;
               });
-          }, 3600000); // 每隔 1 小时自动切换到下一批最新最热门
+          }, 3600000); 
           return () => clearInterval(timer);
       }, [polyMarkets.length]);
 
@@ -1145,7 +1130,10 @@ JSON 字段要求：
       const totalUnrealizedPnL = totalMarketValue - totalCost; 
       const realizedPnL = investments[investMarket]?.realizedPnL || 0; 
       const totalPnL = totalUnrealizedPnL + realizedPnL; 
-      const todayPnLPct = totalCost > 0 ? (todayPnL / totalCost) * 100 : 0;
+      
+      // 【核心改进】当日盈亏比例基于"真实开盘总市值 (当前市值-今日盈亏)"计算
+      const prevMarketValue = totalMarketValue - todayPnL;
+      const todayPnLPct = prevMarketValue > 0 ? (todayPnL / prevMarketValue) * 100 : 0;
       const totalPnLPct = totalCost > 0 ? (totalPnL / totalCost) * 100 : 0;
 
       const handleInvestAIAnalysis = async () => {
@@ -1220,6 +1208,15 @@ JSON 字段要求：
                     <div className={`w-[1px] h-3 ${isDarkMode ? 'bg-white/10' : 'bg-slate-300'}`} />
                     <span className={`text-[10px] font-bold flex items-center gap-1 ${theme.textMain} opacity-80`}><Wind className="w-3 h-3 text-blue-400" /> {weather.wind}</span>
                   </div>
+                  {/* 【新增】：动态播报最近的家人生日和节假日 */}
+                  {upcomingEvents.length > 0 && upcomingEvents[activeEventIdx] && (
+                    <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full shadow-sm ${theme.card} animate-in fade-in duration-500`}>
+                      {upcomingEvents[activeEventIdx].type === 'birthday' ? <Cake className="w-3.5 h-3.5 text-pink-500" /> : <Calendar className="w-3.5 h-3.5 text-purple-500" />}
+                      <span className={`text-[11px] font-bold ${theme.textMain}`}>
+                        {upcomingEvents[activeEventIdx].name} {upcomingEvents[activeEventIdx].daysAway === 0 ? '今天' : `距今 ${upcomingEvents[activeEventIdx].daysAway} 天`}
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-3">
@@ -1413,6 +1410,7 @@ JSON 字段要求：
                       )}
                    </div>
 
+                   {}
                    {investTab === 'daily' && (
                      <>
                        <div className="grid grid-cols-5 mb-1">
@@ -1434,7 +1432,8 @@ JSON 字段要求：
                                      if (calendarViewMode === 'amount') {
                                          displayVal = formatInvestNum(val, false, investMarket === 'US' ? '$' : '¥');
                                      } else {
-                                         const pct = totalCost > 0 ? (val / totalCost) * 100 : 0;
+                                         // 【修改点】按当天实时市值算比例
+                                         const pct = totalMarketValue > 0 ? (val / totalMarketValue) * 100 : 0;
                                          displayVal = (pct > 0 ? '+' : '') + pct.toFixed(2) + '%';
                                      }
                                  }
@@ -1454,12 +1453,12 @@ JSON 字段要求：
                                当月累计盈亏: <span className={getInvestmentTotal('monthly') >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}>{
                                    calendarViewMode === 'amount' 
                                        ? formatInvestNum(getInvestmentTotal('monthly'), false, investMarket === 'US' ? '$' : '¥')
-                                       : (totalCost > 0 ? (getInvestmentTotal('monthly') > 0 ? '+' : '') + ((getInvestmentTotal('monthly') / totalCost) * 100).toFixed(2) + '%' : '0.00%')
+                                       : (totalMarketValue > 0 ? (getInvestmentTotal('monthly') > 0 ? '+' : '') + ((getInvestmentTotal('monthly') / totalMarketValue) * 100).toFixed(2) + '%' : '0.00%')
                                }</span>
                            </div>
                            {calendarViewMode === 'percent' && (
                                <div className={`text-[9px] ${theme.textSub}`}>
-                                   *比例基于当前持仓总成本计算: {formatInvestNum(totalCost, false, investMarket === 'US' ? '$' : '¥')}
+                                   *比例基于当前实时总市值计算: {formatInvestNum(totalMarketValue, false, investMarket === 'US' ? '$' : '¥')}
                                </div>
                            )}
                        </div>
@@ -1479,7 +1478,7 @@ JSON 字段要求：
                             let displayVal = '--';
                             if (mTotal !== 0) {
                                 if (calendarViewMode === 'amount') { displayVal = formatInvestNum(mTotal, false, investMarket === 'US' ? '$' : '¥'); } 
-                                else { const pct = totalCost > 0 ? (mTotal / totalCost) * 100 : 0; displayVal = (pct > 0 ? '+' : '') + pct.toFixed(2) + '%'; }
+                                else { const pct = totalMarketValue > 0 ? (mTotal / totalMarketValue) * 100 : 0; displayVal = (pct > 0 ? '+' : '') + pct.toFixed(2) + '%'; }
                             }
 
                             return (
@@ -1501,13 +1500,13 @@ JSON 字段要求：
                               <span className={`text-2xl font-black font-mono tracking-tighter ${getInvestmentTotal('yearly') >= 0 ? theme.redUp.split(' ')[0] : theme.greenDown.split(' ')[0]}`}>
                                 {calendarViewMode === 'amount' 
                                     ? formatInvestNum(getInvestmentTotal('yearly'), false, investMarket === 'US' ? '$' : '¥')
-                                    : (totalCost > 0 ? (getInvestmentTotal('yearly') > 0 ? '+' : '') + ((getInvestmentTotal('yearly') / totalCost) * 100).toFixed(2) + '%' : '0.00%')
+                                    : (totalMarketValue > 0 ? (getInvestmentTotal('yearly') > 0 ? '+' : '') + ((getInvestmentTotal('yearly') / totalMarketValue) * 100).toFixed(2) + '%' : '0.00%')
                                 }
                               </span>
                           </div>
                           {calendarViewMode === 'percent' && (
                               <div className={`text-[9px] text-right ${theme.textSub}`}>
-                                  *比例基于当前持仓总成本计算: {formatInvestNum(totalCost, false, investMarket === 'US' ? '$' : '¥')}
+                                  *比例基于当前实时总市值计算: {formatInvestNum(totalMarketValue, false, investMarket === 'US' ? '$' : '¥')}
                               </div>
                           )}
                         </div>
@@ -1630,6 +1629,7 @@ JSON 字段要求：
                 </div>
               </div>
 
+              {}
               <div className="lg:col-span-4 space-y-6">
                  <div className={`${theme.card} rounded-[2rem] p-5 shadow-xl border-none relative overflow-hidden`}>
                     <h3 className={`text-[10px] font-black uppercase tracking-widest mb-3 flex items-center gap-1.5 ${theme.textSub}`}><Globe className="w-3.5 h-3.5 text-blue-500"/> 7x24 实时快讯</h3>
@@ -1790,6 +1790,7 @@ JSON 字段要求：
             </div>
           )}
 
+          {}
           {showCloseModal && (
             <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={(e) => { if(e.target === e.currentTarget) { setShowCloseModal(false); setClosePositionData({ id: '', code: '', name: '', qty: 0, cost: 0, sellPrice: '', sellQty: '', error: '' }); } }}>
               <div className={`${theme.modalBg} p-6 rounded-[2rem] w-full max-w-sm shadow-2xl border ${isDarkMode ? 'border-[#213743]' : ''}`}>
