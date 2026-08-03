@@ -1,0 +1,1315 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>足球盘口 · 实时赔率</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg-page:      #101c28;
+      --bg-card:      #1c2b3a;
+      --bg-date:      #1a2836;
+      --bg-row-hover: #1e2f3d;
+      --bg-btn:       #0f1c28;
+      --bg-btn-hover: #16283a;
+      --bg-header:    #16232f;
+      --text-main:    #e9eff5;
+      --text-sub:     #9fb3c4;
+      --text-muted:   #7089a0;
+      --text-odds:    #4d9eff;
+      --text-odds-h:  #7ab8ff;
+      --border:       #253748;
+      --border-soft:  #1f303e;
+      --green:        #00d26a;
+      --orange:       #ffa726;
+      --red:          #ff5252;
+      --accent:       #2f80ed;
+    }
+    body {
+      background: var(--bg-page); color: var(--text-main);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+      min-height: 100vh; -webkit-font-smoothing: antialiased;
+      font-size: 14px; line-height: 1.5;
+    }
+
+    /* ═══ Header ═══ */
+    .header {
+      background: var(--bg-header); border-bottom: 1px solid var(--border);
+      padding: 11px 20px; display: flex; align-items: center; justify-content: space-between;
+      position: sticky; top: 0; z-index: 30; gap: 12px;
+    }
+    .header-left { display: flex; align-items: center; gap: 9px; min-width: 0; }
+    .header-title { font-size: 15px; font-weight: 700; letter-spacing: .2px; white-space: nowrap; }
+    .live-badge {
+      background: rgba(0,210,106,.14); color: var(--green);
+      font-size: 10px; font-weight: 700; padding: 2px 7px;
+      border-radius: 3px; border: 1px solid rgba(0,210,106,.28); letter-spacing: .5px;
+    }
+    .header-right { display: flex; align-items: center; gap: 9px; flex-shrink: 0; }
+
+    .api-counter {
+      display: flex; align-items: center; gap: 6px;
+      background: rgba(255,255,255,.04); border: 1px solid var(--border);
+      border-radius: 5px; padding: 5px 10px; font-size: 11px;
+      color: var(--text-sub); white-space: nowrap; cursor: help;
+    }
+    .api-counter-val { font-weight: 700; font-variant-numeric: tabular-nums; }
+    .api-ok { color: var(--green); } .api-warn { color: var(--orange); } .api-crit { color: var(--red); }
+    .api-bar { width: 46px; height: 3px; background: rgba(255,255,255,.1); border-radius: 2px; overflow: hidden; }
+    .api-bar-fill { height: 100%; background: var(--green); transition: width .3s, background .3s; }
+
+    .btn {
+      border-radius: 5px; cursor: pointer; font-size: 12px; font-weight: 600;
+      display: flex; align-items: center; gap: 5px; white-space: nowrap;
+      transition: background .15s, border-color .15s; padding: 6px 13px;
+    }
+    .btn-primary { background: rgba(47,128,237,.14); color: #8fc0ff; border: 1px solid rgba(47,128,237,.35); }
+    .btn-primary:hover:not(:disabled) { background: rgba(47,128,237,.26); border-color: rgba(47,128,237,.55); }
+    .btn:disabled { opacity: .45; cursor: not-allowed; }
+    .spin { animation: spin .8s linear infinite; display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ═══ League Tabs ═══ */
+    .league-tabs {
+      background: var(--bg-header); border-bottom: 1px solid var(--border);
+      padding: 0 14px; display: flex; overflow-x: auto; scrollbar-width: none;
+      position: sticky; top: 50px; z-index: 29;
+    }
+    .league-tabs::-webkit-scrollbar { display: none; }
+    .tab {
+      padding: 10px 13px; font-size: 12.5px; font-weight: 600;
+      color: var(--text-muted); cursor: pointer;
+      border-bottom: 2px solid transparent; margin-bottom: -1px;
+      white-space: nowrap; transition: color .15s, border-color .15s;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .tab:hover { color: var(--text-main); }
+    .tab.active { color: #fff; border-bottom-color: var(--accent); }
+    .tab-flag { font-size: 14px; line-height: 1; }
+    .tab-count {
+      background: rgba(255,255,255,.09); font-size: 10px; font-weight: 700;
+      padding: 1px 5px; border-radius: 8px; font-variant-numeric: tabular-nums;
+    }
+    .tab.active .tab-count { background: rgba(47,128,237,.32); color: #b8d8ff; }
+
+    /* ═══ Content ═══ */
+    .content { max-width: 1120px; margin: 0 auto; padding: 14px 16px 28px; }
+    .alert { padding: 10px 14px; border-radius: 6px; margin-bottom: 12px; font-size: 12.5px; line-height: 1.6; }
+    .alert-error { background: rgba(255,82,82,.08); border: 1px solid rgba(255,82,82,.28); color: #ff8080; }
+    .alert-warn  { background: rgba(255,167,38,.08); border: 1px solid rgba(255,167,38,.28); color: var(--orange); }
+    .alert-info  { background: rgba(47,128,237,.08); border: 1px solid rgba(47,128,237,.28); color: #8fc0ff; }
+
+    /* ═══ Skeleton ═══ */
+    .skeleton-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
+    .skeleton-row { display: flex; align-items: center; padding: 15px 18px; gap: 14px; border-bottom: 1px solid var(--border-soft); }
+    .skeleton-row:last-child { border-bottom: none; }
+    .skel { background: linear-gradient(90deg,#1e2f3d 25%,#283d4f 50%,#1e2f3d 75%); background-size: 200% 100%; animation: shimmer 1.4s infinite; border-radius: 4px; }
+    @keyframes shimmer { to { background-position: -200% 0; } }
+    .sk-info { flex: 0 0 190px; display: flex; flex-direction: column; gap: 7px; }
+    .sk-t { height: 10px; width: 100px; } .sk-n { height: 13px; width: 140px; }
+    .sk-grp { flex: 1; display: flex; gap: 7px; }
+    .sk-btn { flex: 1; height: 50px; border-radius: 4px; }
+
+    /* ═══ League Section ═══ */
+    .league-section {
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: 7px; overflow: hidden; margin-bottom: 12px;
+    }
+    .league-header {
+      padding: 13px 18px; display: flex; align-items: center; justify-content: space-between;
+      cursor: pointer; user-select: none; transition: background .12s;
+    }
+    .league-header:hover { background: rgba(255,255,255,.02); }
+    .league-header-left { display: flex; align-items: center; gap: 9px; min-width: 0; }
+    .league-flag { font-size: 16px; line-height: 1; }
+    .league-title { font-size: 14.5px; font-weight: 700; color: #fff; letter-spacing: .2px; }
+    .league-meta { font-size: 11.5px; color: var(--text-muted); font-weight: 500; }
+    .league-toggle { color: var(--text-sub); font-size: 13px; transition: transform .2s; }
+    .league-section.collapsed .league-toggle { transform: rotate(180deg); }
+    .league-section.collapsed .league-body { display: none; }
+
+    .date-row {
+      padding: 8px 18px; background: var(--bg-date);
+      border-top: 1px solid var(--border-soft); border-bottom: 1px solid var(--border-soft);
+      font-size: 11.5px; font-weight: 500; color: var(--text-sub); letter-spacing: .2px;
+    }
+
+    /* ═══ Match Row ═══ */
+    .match-row {
+      display: grid; grid-template-columns: 236px 1fr 58px;
+      align-items: center; border-bottom: 1px solid var(--border-soft);
+      transition: background .12s;
+    }
+    .match-row:last-child { border-bottom: none; }
+    .match-row:hover { background: var(--bg-row-hover); }
+
+    .match-info { padding: 12px 14px 12px 18px; min-width: 0; }
+    .match-time {
+      font-size: 11.5px; color: var(--text-sub); margin-bottom: 8px;
+      display: flex; align-items: center; gap: 6px; font-weight: 500;
+      font-variant-numeric: tabular-nums;
+    }
+    .live-dot { width: 5px; height: 5px; background: var(--green); border-radius: 50%; animation: pulse 1.6s ease-in-out infinite; flex-shrink: 0; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.28} }
+    .match-tag {
+      font-size: 9px; font-weight: 700; color: var(--text-muted);
+      border: 1px solid var(--border); border-radius: 2px; padding: 0 3px; letter-spacing: .3px;
+    }
+    .team-line { display: flex; align-items: center; gap: 8px; line-height: 1.75; min-width: 0; }
+    .team-badge {
+      width: 15px; height: 15px; border-radius: 50%; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 8px; font-weight: 700; color: #fff; opacity: .92;
+    }
+    .team-name {
+      font-size: 13.5px; font-weight: 600; color: var(--text-main);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: .1px;
+    }
+
+    .odds-wrap { padding: 10px 8px; min-width: 0; }
+    .odds-market-label {
+      font-size: 11px; color: var(--text-muted); text-align: center;
+      margin-bottom: 7px; font-weight: 500; letter-spacing: .3px;
+    }
+    .odds-row { display: flex; gap: 7px; }
+    .odds-btn {
+      flex: 1; background: var(--bg-btn); border: 1px solid var(--border-soft);
+      border-radius: 4px; padding: 9px 11px; cursor: pointer;
+      transition: background .12s, border-color .12s; min-width: 0; text-align: left;
+      display: flex; flex-direction: column; gap: 3px;
+    }
+    .odds-btn:hover { background: var(--bg-btn-hover); border-color: rgba(77,158,255,.4); }
+    .odds-btn:active { transform: scale(.985); }
+    .odds-btn-label {
+      font-size: 11.5px; color: var(--text-sub); font-weight: 500;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .odds-btn-val {
+      font-size: 15px; font-weight: 700; color: var(--text-odds);
+      letter-spacing: .3px; font-variant-numeric: tabular-nums;
+    }
+    .odds-btn:hover .odds-btn-val { color: var(--text-odds-h); }
+    .odds-locked {
+      display: flex; align-items: center; justify-content: center; height: 50px;
+      color: var(--text-muted); font-size: 12px;
+      background: var(--bg-btn); border: 1px solid var(--border-soft); border-radius: 4px;
+    }
+
+    .more-btn {
+      display: flex; align-items: center; justify-content: center; height: 100%;
+      font-size: 13px; font-weight: 700; color: var(--text-sub);
+      cursor: pointer; transition: color .12s, background .12s; user-select: none;
+      font-variant-numeric: tabular-nums;
+    }
+    .more-btn:hover { color: #fff; background: rgba(47,128,237,.12); }
+    .more-btn:active { transform: scale(.94); }
+
+    /* ═══ Load more ═══ */
+    .load-more-wrap { display: flex; justify-content: center; padding: 6px 0 2px; }
+    .load-more-btn {
+      background: rgba(255,255,255,.04); color: var(--text-sub);
+      border: 1px solid var(--border); border-radius: 6px;
+      padding: 10px 22px; font-size: 12.5px; font-weight: 600; cursor: pointer;
+      display: flex; align-items: center; gap: 7px; transition: all .15s;
+    }
+    .load-more-btn:hover:not(:disabled) { background: rgba(47,128,237,.12); color: #8fc0ff; border-color: rgba(47,128,237,.4); }
+    .load-more-btn:disabled { opacity: .45; cursor: not-allowed; }
+    .load-more-cost { font-size: 10.5px; color: var(--text-muted); font-weight: 500; }
+
+    /* ═══ Empty / Status ═══ */
+    .empty { background: var(--bg-card); border: 1px solid var(--border); border-radius: 7px; padding: 52px 20px; text-align: center; color: var(--text-muted); }
+    .empty-icon { font-size: 34px; margin-bottom: 12px; opacity: .7; }
+    .empty-txt { font-size: 13px; line-height: 1.6; }
+
+    .status-bar {
+      margin-top: 12px; padding: 10px 15px; background: var(--bg-card);
+      border: 1px solid var(--border); border-radius: 6px;
+      display: flex; align-items: center; justify-content: space-between;
+      font-size: 11.5px; gap: 12px; flex-wrap: wrap;
+    }
+    .s-ok { color: var(--green); } .s-warn { color: var(--orange); } .s-err { color: var(--red); }
+    .s-right { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+    /* ═══ Detail Panel ═══ */
+    .detail-overlay {
+      position: fixed; inset: 0; background: rgba(6,12,18,.62); z-index: 100;
+      opacity: 0; pointer-events: none; transition: opacity .2s; backdrop-filter: blur(1.5px);
+    }
+    .detail-overlay.open { opacity: 1; pointer-events: all; }
+    .detail-panel {
+      position: fixed; top: 0; right: 0; width: 460px; max-width: 100vw; height: 100vh;
+      background: var(--bg-page); border-left: 1px solid var(--border); z-index: 101;
+      display: flex; flex-direction: column; transform: translateX(100%);
+      transition: transform .26s cubic-bezier(.4,0,.2,1); overflow: hidden;
+      box-shadow: -8px 0 32px rgba(0,0,0,.35);
+    }
+    .detail-panel.open { transform: translateX(0); }
+
+    .dp-header {
+      background: var(--bg-header); border-bottom: 1px solid var(--border);
+      padding: 15px 18px 13px; flex-shrink: 0; position: relative;
+    }
+    .dp-close {
+      position: absolute; top: 13px; right: 15px; background: none; border: none;
+      color: var(--text-muted); font-size: 19px; cursor: pointer; line-height: 1;
+      padding: 2px 5px; transition: color .15s; border-radius: 3px;
+    }
+    .dp-close:hover { color: #fff; background: rgba(255,255,255,.06); }
+    .dp-league { font-size: 11px; color: var(--text-muted); font-weight: 600; margin-bottom: 8px; letter-spacing: .3px; }
+    .dp-team-line { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+    .dp-team { font-size: 15px; font-weight: 700; color: #fff; }
+    .dp-time {
+      font-size: 11.5px; color: var(--text-sub); display: flex; align-items: center; gap: 5px;
+      margin-top: 9px; background: rgba(255,255,255,.04); border: 1px solid var(--border-soft);
+      border-radius: 4px; padding: 4px 9px; width: fit-content; font-variant-numeric: tabular-nums;
+    }
+    .dp-free-badge {
+      display: inline-flex; align-items: center; gap: 4px;
+      font-size: 10px; font-weight: 700; color: var(--green);
+      background: rgba(0,210,106,.12); border: 1px solid rgba(0,210,106,.3);
+      border-radius: 3px; padding: 2px 6px; margin-left: 7px;
+    }
+
+    .dp-body { flex: 1; overflow-y: auto; padding: 12px 14px 24px; }
+    .dp-body::-webkit-scrollbar { width: 5px; }
+    .dp-body::-webkit-scrollbar-track { background: transparent; }
+    .dp-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    .dp-body::-webkit-scrollbar-thumb:hover { background: #34495e; }
+
+    .mkt-block {
+      margin-bottom: 11px; background: var(--bg-card);
+      border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
+    }
+    .mkt-block-header {
+      padding: 11px 15px; display: flex; align-items: center; justify-content: space-between;
+      cursor: pointer; user-select: none; transition: background .12s;
+    }
+    .mkt-block-header:hover { background: rgba(255,255,255,.025); }
+    .mkt-block-title { font-size: 13.5px; font-weight: 700; color: #fff; letter-spacing: .2px; }
+    .mkt-block-toggle { color: var(--text-sub); font-size: 12px; transition: transform .2s; }
+    .mkt-block.collapsed .mkt-block-toggle { transform: rotate(180deg); }
+    .mkt-block-body {
+      padding: 10px 9px 10px; display: flex; flex-direction: column; gap: 6px;
+      border-top: 1px solid var(--border-soft);
+    }
+    .mkt-block.collapsed .mkt-block-body { display: none; }
+
+    .d-row { display: flex; gap: 6px; }
+    .d-btn {
+      flex: 1; background: var(--bg-btn); border: 1px solid var(--border-soft);
+      border-radius: 4px; padding: 10px 12px;
+      display: flex; justify-content: space-between; align-items: center;
+      cursor: pointer; transition: background .12s, border-color .12s; gap: 8px; min-width: 0;
+    }
+    .d-btn:hover { background: var(--bg-btn-hover); border-color: rgba(77,158,255,.4); }
+    .d-btn:active { transform: scale(.99); }
+    .d-btn-label {
+      font-size: 12.5px; color: var(--text-sub); font-weight: 500;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .d-btn-val { font-size: 14px; font-weight: 700; color: var(--text-odds); flex-shrink: 0; font-variant-numeric: tabular-nums; }
+    .d-btn:hover .d-btn-val { color: var(--text-odds-h); }
+
+    .dp-note { font-size: 10.5px; color: var(--text-muted); text-align: center; padding: 12px 6px 0; line-height: 1.6; }
+
+    /* ═══ Responsive ═══ */
+    @media (max-width: 760px) {
+      .match-row { grid-template-columns: 150px 1fr 46px; }
+      .match-info { padding: 11px 8px 11px 12px; }
+      .team-name { font-size: 12.5px; }
+      .odds-btn { padding: 8px 8px; }
+      .odds-btn-label { font-size: 10.5px; }
+      .odds-btn-val { font-size: 13.5px; }
+      .detail-panel { width: 100vw; }
+      .header { padding: 10px 12px; }
+      .header-title { font-size: 13.5px; }
+      .api-counter { padding: 4px 7px; font-size: 10px; }
+      .api-bar { display: none; }
+      .content { padding: 12px 10px 24px; }
+      .league-header { padding: 11px 13px; }
+      .date-row { padding: 7px 13px; }
+    }
+    @media (max-width: 460px) {
+      .live-badge { display: none; }
+      .match-row { grid-template-columns: 116px 1fr 40px; }
+      .odds-btn-label { display: none; }
+      .odds-btn { align-items: center; justify-content: center; padding: 13px 4px; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <span style="font-size:17px">⚽</span>
+    <span class="header-title">足球盘口</span>
+    <span class="live-badge">LIVE</span>
+  </div>
+  <div class="header-right">
+    <div class="api-counter" id="apiCounter" title="本小时 API 调用次数（免费版限额 100 次/小时）">
+      <span>API</span>
+      <span class="api-counter-val api-ok" id="apiCount">0</span>
+      <span style="color:var(--text-muted)">/100</span>
+      <div class="api-bar"><div class="api-bar-fill" id="apiBar" style="width:0%"></div></div>
+    </div>
+    <button class="btn btn-primary" id="refreshBtn" onclick="loadHome(true)">
+      <span id="refreshIcon">↻</span> 刷新
+    </button>
+  </div>
+</div>
+
+<div class="league-tabs" id="leagueTabs"></div>
+
+<div class="content">
+  <div id="alertBox"></div>
+  <div id="matchList"></div>
+  <div id="loadMoreBox"></div>
+  <div id="statusBar" class="status-bar" style="display:none">
+    <span id="sLeft"></span>
+    <span id="sRight" class="s-right"></span>
+  </div>
+</div>
+
+<div class="detail-overlay" id="detailOverlay" onclick="closeDetail()"></div>
+
+<div class="detail-panel" id="detailPanel">
+  <div class="dp-header">
+    <button class="dp-close" onclick="closeDetail()">✕</button>
+    <div class="dp-league" id="dpLeague">—</div>
+    <div class="dp-team-line"><span class="dp-team" id="dpHome">—</span></div>
+    <div class="dp-team-line"><span class="dp-team" id="dpAway">—</span></div>
+    <div style="display:flex;align-items:center;flex-wrap:wrap">
+      <div class="dp-time" id="dpTime">—</div>
+      <span class="dp-free-badge">✓ 0 次调用</span>
+    </div>
+  </div>
+  <div class="dp-body" id="dpBody"></div>
+</div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════
+   配置
+   ─────────────────────────────────────────────────────────────
+   API 实测限制：
+   · odds/multi 每次最多 10 个 eventIds
+   · bookmakers 参数必填，有效值如 Stake
+   · 批量接口已返回每场「全部盘口」→ 详情页 0 次调用
+═══════════════════════════════════════════════════════════════ */
+const API_KEY = '0fae0f011b1fdd359aeb8a50f088b5376b694e4ad08f65519b7393ee295bb629';
+const BASE    = 'https://api.odds-api.io/v3';
+
+const HOME_TTL      = 30 * 60 * 1000;  // 缓存 30 分钟
+const HOURLY_LIMIT  = 100;
+const WARN_AT       = 80;
+const BLOCK_AT      = 96;
+const BATCH_SIZE    = 10;              // API 硬限制
+const BOOKMAKER     = 'Stake';
+
+const LS_HOME   = 'fbodds_home_v4';
+const LS_EVENTS = 'fbodds_events_v4';
+const LS_APILOG = 'fbodds_apilog_v4';
+
+/* ═══ 联赛配置 ═══ */
+const LEAGUE_CONFIG = {
+  'Japan - J.League':{flag:'🇯🇵',short:'J1联赛',cn:'日本J1联赛'},
+  'Japan - J.League 2':{flag:'🇯🇵',short:'J2联赛',cn:'日本J2联赛'},
+  'Japan - J-League 3':{flag:'🇯🇵',short:'J3联赛',cn:'日本J3联赛'},
+  'Japan - J.League Cup':{flag:'🇯🇵',short:'J联杯',cn:'日本联赛杯'},
+  'England - Premier League':{flag:'🏴󠁧󠁢󠁥󠁮󠁧󠁿',short:'英超',cn:'英格兰超级联赛'},
+  'England - Championship':{flag:'🏴󠁧󠁢󠁥󠁮󠁧󠁿',short:'英冠',cn:'英格兰冠军联赛'},
+  'England - League One':{flag:'🏴󠁧󠁢󠁥󠁮󠁧󠁿',short:'英甲',cn:'英格兰甲级联赛'},
+  'England - League Two':{flag:'🏴󠁧󠁢󠁥󠁮󠁧󠁿',short:'英乙',cn:'英格兰乙级联赛'},
+  'England - EFL Cup':{flag:'🏴󠁧󠁢󠁥󠁮󠁧󠁿',short:'英联杯',cn:'英格兰联赛杯'},
+  'England - FA Cup':{flag:'🏴󠁧󠁢󠁥󠁮󠁧󠁿',short:'足总杯',cn:'英格兰足总杯'},
+  'Spain - LaLiga':{flag:'🇪🇸',short:'西甲',cn:'西班牙甲级联赛'},
+  'Spain - La Liga':{flag:'🇪🇸',short:'西甲',cn:'西班牙甲级联赛'},
+  'Spain - LaLiga 2':{flag:'🇪🇸',short:'西乙',cn:'西班牙乙级联赛'},
+  'Italy - Serie A':{flag:'🇮🇹',short:'意甲',cn:'意大利甲级联赛'},
+  'Italy - Serie B':{flag:'🇮🇹',short:'意乙',cn:'意大利乙级联赛'},
+  'Germany - Bundesliga':{flag:'🇩🇪',short:'德甲',cn:'德国甲级联赛'},
+  'Germany - 2. Bundesliga':{flag:'🇩🇪',short:'德乙',cn:'德国乙级联赛'},
+  'France - Ligue 1':{flag:'🇫🇷',short:'法甲',cn:'法国甲级联赛'},
+  'France - Ligue 2':{flag:'🇫🇷',short:'法乙',cn:'法国乙级联赛'},
+  'Netherlands - Eredivisie':{flag:'🇳🇱',short:'荷甲',cn:'荷兰甲级联赛'},
+  'Portugal - Liga Portugal':{flag:'🇵🇹',short:'葡超',cn:'葡萄牙超级联赛'},
+  'Portugal - Primeira Liga':{flag:'🇵🇹',short:'葡超',cn:'葡萄牙超级联赛'},
+  'Belgium - Pro League':{flag:'🇧🇪',short:'比甲',cn:'比利时甲级联赛'},
+  'Scotland - Premiership':{flag:'🏴󠁧󠁢󠁳󠁣󠁴󠁿',short:'苏超',cn:'苏格兰超级联赛'},
+  'Turkey - Super Lig':{flag:'🇹🇷',short:'土超',cn:'土耳其超级联赛'},
+  'Greece - Super League':{flag:'🇬🇷',short:'希超',cn:'希腊超级联赛'},
+  'Russia - Premier League':{flag:'🇷🇺',short:'俄超',cn:'俄罗斯超级联赛'},
+  'Ukraine - Premier League':{flag:'🇺🇦',short:'乌超',cn:'乌克兰超级联赛'},
+  'Austria - Bundesliga':{flag:'🇦🇹',short:'奥甲',cn:'奥地利甲级联赛'},
+  'Switzerland - Super League':{flag:'🇨🇭',short:'瑞超',cn:'瑞士超级联赛'},
+  'Denmark - Superliga':{flag:'🇩🇰',short:'丹超',cn:'丹麦超级联赛'},
+  'Denmark - DBU Pokalen':{flag:'🇩🇰',short:'丹麦杯',cn:'丹麦杯'},
+  'Sweden - Allsvenskan':{flag:'🇸🇪',short:'瑞典超',cn:'瑞典超级联赛'},
+  'Norway - Eliteserien':{flag:'🇳🇴',short:'挪超',cn:'挪威超级联赛'},
+  'Poland - Ekstraklasa':{flag:'🇵🇱',short:'波兰超',cn:'波兰超级联赛'},
+  'Czechia - Czech Cup':{flag:'🇨🇿',short:'捷克杯',cn:'捷克杯'},
+  'Czechia - First League':{flag:'🇨🇿',short:'捷甲',cn:'捷克甲级联赛'},
+  'Romania - Liga 1':{flag:'🇷🇴',short:'罗甲',cn:'罗马尼亚甲级联赛'},
+  'Romania - Liga 2':{flag:'🇷🇴',short:'罗乙',cn:'罗马尼亚乙级联赛'},
+  'Brazil - Serie A':{flag:'🇧🇷',short:'巴甲',cn:'巴西甲级联赛'},
+  'Brazil - Brasileiro Serie A':{flag:'🇧🇷',short:'巴甲',cn:'巴西甲级联赛'},
+  'Brazil - Serie B':{flag:'🇧🇷',short:'巴乙',cn:'巴西乙级联赛'},
+  'Argentina - Primera LPF':{flag:'🇦🇷',short:'阿甲',cn:'阿根廷甲级联赛'},
+  'Argentina - Primera Division':{flag:'🇦🇷',short:'阿甲',cn:'阿根廷甲级联赛'},
+  'Argentina - Primera B Nacional':{flag:'🇦🇷',short:'阿乙',cn:'阿根廷乙级联赛'},
+  'Argentina - Primera C':{flag:'🇦🇷',short:'阿丙',cn:'阿根廷丙级联赛'},
+  'Mexico - Liga MX':{flag:'🇲🇽',short:'墨超',cn:'墨西哥超级联赛'},
+  'USA - MLS':{flag:'🇺🇸',short:'美职联',cn:'美国职业大联盟'},
+  'USA - MLS Next Pro':{flag:'🇺🇸',short:'美职次',cn:'美职联次级联赛'},
+  'Korea - K League 1':{flag:'🇰🇷',short:'韩K1',cn:'韩国K1联赛'},
+  'Korea - K League 2':{flag:'🇰🇷',short:'韩K2',cn:'韩国K2联赛'},
+  'China - Super League':{flag:'🇨🇳',short:'中超',cn:'中国超级联赛'},
+  'China - League One':{flag:'🇨🇳',short:'中甲',cn:'中国甲级联赛'},
+  'Australia - A-League':{flag:'🇦🇺',short:'澳超',cn:'澳大利亚超级联赛'},
+  'Saudi Arabia - Pro League':{flag:'🇸🇦',short:'沙特超',cn:'沙特超级联赛'},
+  'Kazakhstan - Premier League':{flag:'🇰🇿',short:'哈超',cn:'哈萨克斯坦超级联赛'},
+  'Uzbekistan - Pro Liga':{flag:'🇺🇿',short:'乌兹超',cn:'乌兹别克斯坦超级联赛'},
+  'Faroe Islands - Premier League':{flag:'🇫🇴',short:'法罗超',cn:'法罗群岛超级联赛'},
+  'Ireland - Premier Division':{flag:'🇮🇪',short:'爱超',cn:'爱尔兰超级联赛'},
+  'Iceland - Besta deild':{flag:'🇮🇸',short:'冰超',cn:'冰岛超级联赛'},
+  'Finland - Veikkausliiga':{flag:'🇫🇮',short:'芬超',cn:'芬兰超级联赛'},
+  'Colombia - Liga DIMAYOR':{flag:'🇨🇴',short:'哥超',cn:'哥伦比亚超级联赛'},
+  'Chile - Primera Division':{flag:'🇨🇱',short:'智甲',cn:'智利甲级联赛'},
+  'Peru - Liga 1':{flag:'🇵🇪',short:'秘甲',cn:'秘鲁甲级联赛'},
+  'Uruguay - Primera Division':{flag:'🇺🇾',short:'乌拉甲',cn:'乌拉圭甲级联赛'},
+  'Ecuador - Liga Pro':{flag:'🇪🇨',short:'厄甲',cn:'厄瓜多尔甲级联赛'},
+  'Paraguay - Primera Division':{flag:'🇵🇾',short:'巴拉甲',cn:'巴拉圭甲级联赛'},
+  'Japan - Emperor Cup':{flag:'🇯🇵',short:'天皇杯',cn:'日本天皇杯'},
+};
+
+/* 国际赛事前缀映射 */
+const INTL_PATTERNS = [
+  [/UEFA Champions League/i,          {flag:'🏆',short:'欧冠',   cn:'欧洲冠军联赛'}],
+  [/UEFA Europa League/i,             {flag:'🏆',short:'欧联杯', cn:'欧洲联赛'}],
+  [/UEFA Conference League/i,         {flag:'🏆',short:'欧协联', cn:'欧洲协会联赛'}],
+  [/UEFA Nations League/i,            {flag:'🏆',short:'欧国联', cn:'欧洲国家联赛'}],
+  [/Club Friendly/i,                  {flag:'🤝',short:'俱乐部友谊',cn:'俱乐部友谊赛'}],
+  [/Leagues Cup/i,                    {flag:'🏆',short:'联赛杯', cn:'联赛杯'}],
+  [/Copa Libertadores/i,              {flag:'🏆',short:'解放者杯',cn:'南美解放者杯'}],
+  [/Copa Sudamericana/i,              {flag:'🏆',short:'南美杯', cn:'南美杯'}],
+  [/AFC Champions League/i,           {flag:'🏆',short:'亚冠',   cn:'亚洲冠军联赛'}],
+  [/ASEAN Championship/i,             {flag:'🏆',short:'东盟杯', cn:'东盟锦标赛'}],
+  [/World Cup/i,                      {flag:'🌍',short:'世界杯', cn:'世界杯'}],
+  [/CONCACAF/i,                       {flag:'🏆',short:'中北美', cn:'中北美及加勒比海赛事'}],
+  [/Women/i,                          {flag:'♀',short:'女足',   cn:'女子足球赛事'}],
+];
+
+/* ═══ 球队中文名 ═══ */
+const TEAM_CN = {
+  'Yokohama F Marinos':'横滨水手','Kashima Antlers':'鹿岛鹿角','Gamba Osaka':'大阪钢巴',
+  'Urawa Red Diamonds':'浦和红钻','Kashiwa Reysol':'柏太阳神','FC Tokyo':'东京FC',
+  'Kawasaki Frontale':'川崎前锋','Nagoya Grampus':'名古屋鲸鱼','Cerezo Osaka':'大阪樱花',
+  'Sanfrecce Hiroshima':'广岛三箭','Vissel Kobe':'神户胜利船','Avispa Fukuoka':'福冈黄蜂',
+  'Sagan Tosu':'鸟栖砂岩','Kyoto Sanga FC':'京都不死鸟','Shonan Bellmare':'湘南海洋',
+  'Albirex Niigata':'新潟天鹅','Machida Zelvia':'町田泽维亚','Tokyo Verdy':'东京绿茵',
+  'Jubilo Iwata':'磐田喜悦','RB Omiya Ardija':'大宫松鼠','FC Osaka':'大阪FC',
+  'Hokkaido Consadole Sapporo':'北海道札幌冈萨多','Yokohama FC':'横滨FC',
+  'JEF United Chiba':'千叶市原联合','Montedio Yamagata':'山形蒙迪奥','Vegalta Sendai':'仙台维加泰',
+  'Ventforet Kofu':'甲府风林','Tokushima Vortis':'德岛漩涡','Fagiano Okayama':'冈山雉鸡',
+  'Oita Trinita':'大分三神','Roasso Kumamoto':'熊本罗亚索','V-Varen Nagasaki':'长崎V-法伦',
+  'Mito Hollyhock':'水户蜀葵','Blaublitz Akita':'秋田蓝闪','Renofa Yamaguchi':'山口雷诺法',
+  'Zweigen Kanazawa':'金泽泽根','Ehime FC':'爱媛FC','Thespa Gunma':'群马泰斯帕',
+  'Tochigi SC':'栃木SC','Shimizu S-Pulse':'清水心跳','Iwaki FC':'磐城FC','FC Ryukyu':'琉球FC',
+  'AC Nagano Parceiro':'长野帕塞罗','Fujieda MYFC':'藤枝MYFC','FC Gifu':'岐阜FC',
+  'Gainare Tottori':'鸟取盖纳雷','Giravanz Kitakyushu':'北九州吉拉万兹','Kagoshima United':'鹿儿岛联合',
+  'Kataller Toyama':'富山卡塔勒','Matsumoto Yamaga FC':'松本山雅FC','Nara Club':'奈良俱乐部',
+  'SC Sagamihara':'相模原SC','Tochigi City FC':'栃木城FC','Fukushima United FC':'福岛联合FC',
+
+  'Arsenal':'阿森纳','Aston Villa':'阿斯顿维拉','Bournemouth':'伯恩茅斯','AFC Bournemouth':'伯恩茅斯',
+  'Brentford':'布伦特福德','Brighton':'布莱顿','Brighton & Hove Albion':'布莱顿',
+  'Chelsea':'切尔西','Chelsea FC':'切尔西','Crystal Palace':'水晶宫','Everton':'埃弗顿',
+  'Fulham':'富勒姆','Fulham FC':'富勒姆','Ipswich Town':'伊普斯维奇','Leicester City':'莱斯特城',
+  'Liverpool':'利物浦','Liverpool FC':'利物浦','Manchester City':'曼彻斯特城','Manchester United':'曼彻斯特联',
+  'Newcastle United':'纽卡斯尔联','Nottingham Forest':'诺丁汉森林','Southampton':'南安普顿',
+  'Tottenham Hotspur':'托特纳姆热刺','West Ham United':'西汉姆联',
+  'Wolverhampton Wanderers':'伍尔弗汉普顿','Wolves':'伍尔弗汉普顿',
+  'York City':'约克城','Crawley Town':'克劳利镇','Leeds United':'利兹联','Burnley':'伯恩利',
+  'Sheffield United':'谢菲尔德联','Sunderland':'桑德兰','Sunderland AFC':'桑德兰',
+  'Middlesbrough':'米德尔斯堡','West Bromwich Albion':'西布罗姆维奇','Norwich City':'诺维奇城',
+  'Coventry City':'考文垂','Watford':'沃特福德','Hull City':'赫尔城','Millwall':'米尔沃尔',
+  'Swansea City':'斯旺西','Cardiff City':'卡迪夫城','Bristol City':'布里斯托尔城',
+  'Preston':'普雷斯顿','Preston North End':'普雷斯顿','Queens Park Rangers':'女王公园巡游者',
+  'Blackburn Rovers':'布莱克本','Derby County':'德比郡','Portsmouth':'朴茨茅斯',
+  'Plymouth Argyle':'普利茅斯','Luton Town':'卢顿','Oxford United':'牛津联',
+  'Stoke City':'斯托克城','Sheffield Wednesday':'谢周三','Charlton Athletic':'查尔顿',
+  'Birmingham City':'伯明翰','Wrexham':'雷克斯汉姆','Bolton Wanderers':'博尔顿',
+
+  'Real Madrid':'皇家马德里','Barcelona':'巴塞罗那','FC Barcelona':'巴塞罗那',
+  'Atletico Madrid':'马德里竞技','Athletic Bilbao':'毕尔巴鄂竞技','Athletic Club':'毕尔巴鄂竞技',
+  'Real Sociedad':'皇家社会','Real Betis':'皇家贝蒂斯','Villarreal':'比利亚雷亚尔',
+  'Valencia':'瓦伦西亚','Valencia CF':'瓦伦西亚','Sevilla':'塞维利亚','Sevilla FC':'塞维利亚',
+  'Celta Vigo':'塞尔塔','Getafe':'赫塔费','Getafe CF':'赫塔费','Osasuna':'奥萨苏纳',
+  'Rayo Vallecano':'拉约瓦列卡诺','Girona':'赫罗纳','Girona FC':'赫罗纳','Mallorca':'马洛卡',
+  'RCD Mallorca':'马洛卡','Alaves':'阿拉维斯','Deportivo Alaves':'阿拉维斯',
+  'Espanyol':'西班牙人','RCD Espanyol':'西班牙人','Las Palmas':'拉斯帕尔马斯',
+  'Leganes':'莱加内斯','Valladolid':'巴利亚多利德','Real Valladolid':'巴利亚多利德',
+  'Elche':'埃尔切','Elche CF':'埃尔切','Levante':'莱万特','Levante UD':'莱万特',
+  'Real Oviedo':'皇家奥维耶多',
+
+  'Inter Milan':'国际米兰','Internazionale':'国际米兰','FC Internazionale Milano':'国际米兰',
+  'AC Milan':'AC米兰','Juventus':'尤文图斯','Juventus FC':'尤文图斯','Napoli':'那不勒斯',
+  'SSC Napoli':'那不勒斯','Roma':'罗马','AS Roma':'罗马','Lazio':'拉齐奥','SS Lazio':'拉齐奥',
+  'Fiorentina':'佛罗伦萨','ACF Fiorentina':'佛罗伦萨','Atalanta':'亚特兰大',
+  'Atalanta BC':'亚特兰大','Bologna':'博洛尼亚','Bologna FC':'博洛尼亚','Torino':'都灵',
+  'Torino FC':'都灵','Udinese':'乌迪内斯','Udinese Calcio':'乌迪内斯','Genoa':'热那亚',
+  'Genoa CFC':'热那亚','Cagliari':'卡利亚里','Cagliari Calcio':'卡利亚里',
+  'Hellas Verona':'维罗纳','Lecce':'莱切','US Lecce':'莱切','Monza':'蒙扎',
+  'AC Monza':'蒙扎','Parma':'帕尔马','Parma Calcio':'帕尔马','Como':'科莫','Como 1907':'科莫',
+  'Venezia':'威尼斯','Venezia FC':'威尼斯','Empoli':'恩波利','FC Empoli':'恩波利',
+  'Pisa':'比萨','Cremonese':'克雷莫纳','US Cremonese':'克雷莫纳','Sassuolo':'萨索洛',
+
+  'Bayern Munich':'拜仁慕尼黑','FC Bayern Munich':'拜仁慕尼黑','Borussia Dortmund':'多特蒙德',
+  'Bayer Leverkusen':'勒沃库森','RB Leipzig':'莱比锡红牛','Eintracht Frankfurt':'法兰克福',
+  'VfB Stuttgart':'斯图加特','Borussia Monchengladbach':'门兴格拉德巴赫',
+  'SC Freiburg':'弗莱堡','Union Berlin':'柏林联合','1. FC Union Berlin':'柏林联合',
+  'Werder Bremen':'不来梅','SV Werder Bremen':'不来梅','Wolfsburg':'沃尔夫斯堡',
+  'VfL Wolfsburg':'沃尔夫斯堡','TSG Hoffenheim':'霍芬海姆','FC Augsburg':'奥格斯堡',
+  'Mainz 05':'美因茨','1. FSV Mainz 05':'美因茨','FC Heidenheim':'海登海姆',
+  '1. FC Heidenheim':'海登海姆','Holstein Kiel':'基尔','FC St. Pauli':'圣保利',
+  'VfL Bochum':'波鸿','Hamburger SV':'汉堡','Schalke 04':'沙尔克04','FC Schalke 04':'沙尔克04',
+  'Hannover 96':'汉诺威96','Fortuna Dusseldorf':'杜塞尔多夫','Karlsruher SC':'卡尔斯鲁厄',
+  'Greuther Furth':'菲尔特','Hertha Berlin':'柏林赫塔','Hertha BSC':'柏林赫塔',
+  '1. FC Nurnberg':'纽伦堡','FC Koln':'科隆','1. FC Koln':'科隆','SV Darmstadt 98':'达姆施塔特',
+  'SV Elversberg':'埃尔沃斯贝格','SC Paderborn':'帕德博恩','Eintracht Braunschweig':'布伦瑞克',
+  'Arminia Bielefeld':'比勒费尔德','Dynamo Dresden':'德累斯顿迪纳摩',
+
+  'Paris Saint-Germain':'巴黎圣日耳曼','PSG':'巴黎圣日耳曼','Marseille':'马赛',
+  'Olympique Marseille':'马赛','Lyon':'里昂','Olympique Lyon':'里昂','Olympique Lyonnais':'里昂',
+  'Monaco':'摩纳哥','AS Monaco':'摩纳哥','Lille':'里尔','LOSC Lille':'里尔',
+  'Nice':'尼斯','OGC Nice':'尼斯','Lens':'朗斯','RC Lens':'朗斯','Rennes':'雷恩',
+  'Stade Rennais':'雷恩','Strasbourg':'斯特拉斯堡','RC Strasbourg':'斯特拉斯堡',
+  'Montpellier':'蒙彼利埃','Nantes':'南特','FC Nantes':'南特','Reims':'兰斯',
+  'Stade de Reims':'兰斯','Brest':'布雷斯特','Stade Brestois':'布雷斯特',
+  'Toulouse':'图卢兹','Toulouse FC':'图卢兹','Le Havre':'勒阿弗尔','Le Havre AC':'勒阿弗尔',
+  'Metz':'梅斯','FC Metz':'梅斯','Lorient':'洛里昂','FC Lorient':'洛里昂',
+  'Clermont Foot':'克莱蒙','Auxerre':'欧塞尔','AJ Auxerre':'欧塞尔','Angers':'昂热',
+  'Angers SCO':'昂热','Saint-Etienne':'圣埃蒂安','AS Saint-Etienne':'圣埃蒂安',
+  'Paris FC':'巴黎FC',
+
+  'Ajax':'阿贾克斯','AFC Ajax':'阿贾克斯','PSV Eindhoven':'埃因霍温','Feyenoord':'费耶诺德',
+  'AZ Alkmaar':'阿尔克马尔','FC Twente':'特温特','FC Utrecht':'乌得勒支','NEC Nijmegen':'奈梅亨',
+  'SC Heerenveen':'海伦芬','Go Ahead Eagles':'前进之鹰','Sparta Rotterdam':'鹿特丹斯巴达',
+  'Benfica':'本菲卡','SL Benfica':'本菲卡','Porto':'波尔图','FC Porto':'波尔图',
+  'Sporting CP':'里斯本竞技','Sporting Lisbon':'里斯本竞技','Braga':'布拉加','SC Braga':'布拉加',
+  'Vitoria Guimaraes':'吉马良斯','Rio Ave':'里奥阿维',
+  'Celtic':'凯尔特人','Celtic FC':'凯尔特人','Rangers':'流浪者','Rangers FC':'流浪者',
+  'Hearts':'哈茨','Hibernian':'希伯尼安','Aberdeen':'阿伯丁',
+  'Shamrock Rovers':'沙姆洛克流浪者','St Patricks Athletic':'圣帕特里克',
+  'Club Brugge':'布鲁日','Anderlecht':'安德莱赫特','RSC Anderlecht':'安德莱赫特',
+  'Royal Antwerp':'安特卫普','KAA Gent':'根特','Standard Liege':'标准列日','Genk':'亨克',
+  'Galatasaray':'加拉塔萨雷','Fenerbahce':'费内巴切','Besiktas':'贝西克塔斯',
+  'Trabzonspor':'特拉布宗体育','Basaksehir':'巴萨克塞希尔',
+  'Olympiacos':'奥林匹亚科斯','Olympiacos Piraeus':'奥林匹亚科斯','Panathinaikos':'帕纳辛奈科斯',
+  'AEK Athens':'雅典AEK','PAOK':'萨洛尼卡',
+  'Red Bull Salzburg':'萨尔茨堡红牛','FC Salzburg':'萨尔茨堡','Rapid Wien':'维也纳快速',
+  'SK Rapid Wien':'维也纳快速','Sturm Graz':'格拉茨风暴','SK Sturm Graz':'格拉茨风暴',
+  'FK Austria Wien':'奥地利维也纳','First Vienna FC 1894':'维也纳第一',
+  'Young Boys':'伯尔尼年轻人','BSC Young Boys':'伯尔尼年轻人','FC Basel':'巴塞尔',
+  'FC Zurich':'苏黎世','Servette FC':'塞尔维特',
+  'FC Copenhagen':'哥本哈根','Brondby':'布隆德比','Midtjylland':'中日德兰',
+  'Malmo FF':'马尔默','AIK':'AIK','Djurgardens IF':'尤尔加登','Hammarby':'哈马比',
+  'Mjallby AIF':'米亚尔比','Bodoe/Glimt':'博多格林特','Molde':'莫尔德','Rosenborg':'罗森堡',
+  'Legia Warsaw':'华沙莱吉亚','Lech Poznan':'波兹南莱赫',
+  'Slavia Prague':'布拉格斯拉维亚','Sparta Prague':'布拉格斯巴达','Viktoria Plzen':'比尔森胜利',
+  'Dinamo Zagreb':'萨格勒布迪纳摩','GNK Dinamo Zagreb':'萨格勒布迪纳摩',
+  'Hajduk Split':'哈伊杜克','Red Star Belgrade':'贝尔格莱德红星',
+  'FK Crvena Zvezda Belgrade':'贝尔格莱德红星','Partizan Belgrade':'贝尔格莱德游击',
+  'Ferencvaros':'费伦茨瓦罗斯','Shakhtar Donetsk':'顿涅茨克矿工','Dynamo Kyiv':'基辅迪纳摩',
+  'FC Obolon Kyiv':'基辅奥博隆','Zenit St Petersburg':'圣彼得堡泽尼特',
+  'FK Zenit Saint Petersburg':'圣彼得堡泽尼特','Spartak Moscow':'莫斯科斯巴达',
+  'CSKA Moscow':'莫斯科中央陆军','Dynamo Moscow':'莫斯科迪纳摩','FC Orenburg':'奥伦堡',
+  'Slovan Bratislava':'布拉迪斯拉发','SK Slovan Bratislava':'布拉迪斯拉发',
+  'NK Celje':'采列','Union Saint-Gilloise':'圣吉尔联','KI Klaksvik':'克拉克斯维克',
+  'B36 Torshavn':'托尔斯港B36','AB Argir':'阿吉尔','Skala IF':'斯卡拉',
+  'Larne FC':'拉恩','Levski Sofia':'索菲亚列夫斯基','PFC Levski Sofia':'索菲亚列夫斯基',
+  'Ludogorets':'卢多戈雷茨','Hapoel Beer Sheva':'贝尔谢巴夏普尔',
+  'Maccabi Tel Aviv':'特拉维夫马卡比','FC Kairat Almaty':'阿拉木图凯拉特',
+  'FC Astana':'阿斯塔纳','FC Zhenis':'泽尼斯','FC Yelimai':'耶利迈','Ulytau FC':'乌雷套',
+  'Breidablik Kopavogur':'布雷达布利克','SK Brann':'布兰',
+
+  'Flamengo':'弗拉门戈','Palmeiras':'帕尔梅拉斯','Sao Paulo':'圣保罗','Corinthians':'科林蒂安',
+  'Santos':'桑托斯','Fluminense':'弗鲁米嫩塞','Botafogo':'博塔弗戈','Gremio':'格雷米奥',
+  'Internacional':'国际体育会','Atletico Mineiro':'米内罗竞技','Cruzeiro':'克鲁塞罗',
+  'Vasco da Gama':'瓦斯科达伽马','Bahia':'巴伊亚','Fortaleza':'福塔雷萨',
+  'Athletico Paranaense':'巴拉纳竞技','Red Bull Bragantino':'布拉干蒂诺',
+  'River Plate':'河床','Boca Juniors':'博卡青年','Racing Club':'竞技俱乐部',
+  'Independiente':'独立队','San Lorenzo':'圣洛伦索','Velez Sarsfield':'萨斯菲尔德',
+  'Estudiantes':'拉普拉塔大学生','Talleres':'塔耶雷斯','Newells Old Boys':'纽维尔老男孩',
+  'Rosario Central':'罗萨里奥中央','Argentinos Juniors':'阿根廷青年',
+  'Gimnasia':'格梅斯竞技','Tristan Suarez':'特里斯坦苏亚雷斯',
+  'Club America':'美洲队','Chivas Guadalajara':'瓜达拉哈拉','Cruz Azul':'蓝十字',
+  'Tigres UANL':'老虎大学','Monterrey':'蒙特雷','Pumas UNAM':'美洲狮',
+  'Inter Miami':'国际迈阿密','LA Galaxy':'洛杉矶银河','LAFC':'洛杉矶FC',
+  'Seattle Sounders':'西雅图海湾人','Atlanta United':'亚特兰大联',
+  'Ulsan Hyundai':'蔚山现代','Jeonbuk Motors':'全北现代','FC Seoul':'首尔FC',
+  'Pohang Steelers':'浦项制铁','Suwon Bluewings':'水原三星',
+  'Shanghai Port':'上海海港','Shanghai Shenhua':'上海申花','Beijing Guoan':'北京国安',
+  'Shandong Taishan':'山东泰山','Chengdu Rongcheng':'成都蓉城',
+  'Al Hilal':'利雅得新月','Al Nassr':'利雅得胜利','Al Ittihad':'吉达联合','Al Ahli':'吉达阿赫利',
+  'Indonesia':'印度尼西亚','Vietnam':'越南','Thailand':'泰国','Malaysia':'马来西亚',
+  'Singapore':'新加坡','Philippines':'菲律宾','Myanmar':'缅甸','Cambodia':'柬埔寨',
+};
+
+const DC_LABEL = { '1X':'主胜或平局', 'X2':'平局或客胜', '12':'主胜或客胜' };
+
+const BADGE_COLORS = ['#e53935','#1e88e5','#43a047','#fb8c00','#8e24aa','#00acc1','#f4511e','#3949ab','#00897b','#c0ca33','#d81b60','#5e35b1'];
+function badgeColor(name) {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 100000;
+  return BADGE_COLORS[h % BADGE_COLORS.length];
+}
+
+/* ═══ 状态 ═══ */
+let _matches   = [];     // 已加载（含完整 markets）的赛事
+let _pending   = [];      // 待加载的赛事（events 已拿到，赔率未取）
+let _isDemo    = false;
+let _curLeague = 'ALL';
+let _collapsed = {};
+let _loadedTs  = 0;
+
+/* ═══════════════════════════════════════════════════════════════
+   API 调用计数（滑动 1 小时窗口）
+═══════════════════════════════════════════════════════════════ */
+function getApiLog() {
+  try {
+    const raw = localStorage.getItem(LS_APILOG);
+    if (!raw) return [];
+    return JSON.parse(raw).filter(t => t > Date.now() - 3600000);
+  } catch { return []; }
+}
+function logApiCall() {
+  const arr = getApiLog(); arr.push(Date.now());
+  try { localStorage.setItem(LS_APILOG, JSON.stringify(arr)); } catch {}
+  updateApiUI();
+}
+function apiCount() { return getApiLog().length; }
+function updateApiUI() {
+  const n = apiCount();
+  const el = document.getElementById('apiCount');
+  const bar = document.getElementById('apiBar');
+  if (!el) return;
+  el.textContent = n;
+  bar.style.width = Math.min(100, n / HOURLY_LIMIT * 100) + '%';
+  el.className = 'api-counter-val ' + (n >= BLOCK_AT ? 'api-crit' : n >= WARN_AT ? 'api-warn' : 'api-ok');
+  bar.style.background = n >= BLOCK_AT ? 'var(--red)' : n >= WARN_AT ? 'var(--orange)' : 'var(--green)';
+  const remain = Math.max(0, HOURLY_LIMIT - n);
+  document.getElementById('apiCounter').title =
+    `本小时已用 ${n} 次，剩余 ${remain} 次\n（免费版限额 ${HOURLY_LIMIT} 次/小时，滑动窗口计算）`;
+}
+function canCall(need = 1) { return apiCount() + need <= BLOCK_AT; }
+
+async function apiFetch(url) {
+  if (!canCall(1)) throw { code:'LIMIT', msg:`已达本小时安全上限（${apiCount()}/${HOURLY_LIMIT}）` };
+  logApiCall();
+  const res = await fetch(url);
+  if (res.status === 429) throw { code:429 };
+  if (!res.ok) throw { code:res.status };
+  return res.json();
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   缓存
+═══════════════════════════════════════════════════════════════ */
+function saveCache() {
+  try {
+    localStorage.setItem(LS_HOME, JSON.stringify({
+      ts: _loadedTs, matches: _matches, pending: _pending, isDemo: _isDemo
+    }));
+  } catch (e) {
+    // 超出配额时只存赛事，不存 markets
+    try {
+      const slim = _matches.map(m => ({ ...m, markets: { ML: m.markets?.ML } }));
+      localStorage.setItem(LS_HOME, JSON.stringify({ ts:_loadedTs, matches:slim, pending:_pending, isDemo:_isDemo }));
+    } catch {}
+  }
+}
+function loadCache() {
+  try {
+    const raw = localStorage.getItem(LS_HOME);
+    if (!raw) return null;
+    const d = JSON.parse(raw);
+    if (!d.ts || Date.now() - d.ts > HOME_TTL) return null;
+    return d;
+  } catch { return null; }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   工具
+═══════════════════════════════════════════════════════════════ */
+function teamCN(n) {
+  if (!n) return '';
+  if (TEAM_CN[n]) return TEAM_CN[n];
+  const c = n.replace(/\(.*?\)/g,'').trim();
+  if (TEAM_CN[c]) return TEAM_CN[c];
+  // 去掉常见后缀再试
+  const c2 = c.replace(/\s+(FC|CF|SC|AC|AFC|SK|FK|BC|CD|UD)$/i,'').trim();
+  if (TEAM_CN[c2]) return TEAM_CN[c2];
+  return n;
+}
+const WEEK = ['周日','周一','周二','周三','周四','周五','周六'];
+function parseDate(ts) {
+  if (!ts) return null;
+  const d = new Date(typeof ts === 'number' ? ts * (ts > 1e11 ? 1 : 1000) : ts);
+  return isNaN(d.getTime()) ? null : d;
+}
+function fmtDateKey(d) {
+  if (!d) return '待定';
+  return `${d.getFullYear()}年${String(d.getMonth()+1).padStart(2,'0')}月${String(d.getDate()).padStart(2,'0')}日${WEEK[d.getDay()]}`;
+}
+function fmtRowTime(d) {
+  if (!d) return '待定';
+  return `${String(d.getMonth()+1).padStart(2,'0')}月${String(d.getDate()).padStart(2,'0')}日${WEEK[d.getDay()]}  ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+}
+function leagueInfo(name) {
+  if (LEAGUE_CONFIG[name]) return LEAGUE_CONFIG[name];
+  for (const [re, info] of INTL_PATTERNS) {
+    if (re.test(name || '')) return info;
+  }
+  // 兜底：取 " - " 后半部分，去掉冗余修饰
+  const raw = String(name || '未知联赛');
+  let short = raw.includes(' - ') ? raw.split(' - ').slice(1).join(' - ') : raw;
+  short = short.replace(/,.*$/, '').trim();
+  if (short.length > 10) short = short.slice(0, 10);
+  return { flag:'⚽', short: short || raw, cn: raw };
+}
+function esc(s) { return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }
+function fmtOdd(v) {
+  const n = parseFloat(v);
+  return (isNaN(n) || n <= 0) ? '-' : n.toFixed(2);
+}
+
+function parseAllMarkets(bookmakers) {
+  const out = {};
+  if (!bookmakers || typeof bookmakers !== 'object') return out;
+  for (const bk of Object.keys(bookmakers)) {
+    const arr = bookmakers[bk];
+    if (!Array.isArray(arr)) continue;
+    for (const m of arr) {
+      if (!m?.name || !Array.isArray(m.odds) || !m.odds.length) continue;
+      if (!out[m.name]) out[m.name] = { bk: bk.replace(' (no latency)',''), odds: m.odds };
+    }
+  }
+  return out;
+}
+function pickML(mk) { return mk?.['ML'] || mk?.['1X2'] || mk?.['h2h'] || null; }
+
+/* 统计一场比赛的可投注项总数（用于 +N 角标） */
+function countBets(markets) {
+  let n = 0;
+  for (const k of Object.keys(markets || {})) {
+    const odds = markets[k].odds || [];
+    for (const o of odds) {
+      // 每个 odds 对象里有几个有效赔率字段
+      for (const [key, v] of Object.entries(o)) {
+        if (key === 'hdp' || key === 'handicap' || key === 'total' || key === 'label') continue;
+        if (parseFloat(v) > 0) n++;
+      }
+    }
+  }
+  return n;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   UI 辅助
+═══════════════════════════════════════════════════════════════ */
+function setAlert(type, msg) {
+  document.getElementById('alertBox').innerHTML = msg ? `<div class="alert alert-${type}">${msg}</div>` : '';
+}
+function setStatus(cls, left, right) {
+  const bar = document.getElementById('statusBar');
+  bar.style.display = 'flex';
+  const l = document.getElementById('sLeft');
+  l.className = cls; l.innerHTML = left;
+  document.getElementById('sRight').textContent = right || '';
+}
+function setBusy(on) {
+  document.getElementById('refreshBtn').disabled = on;
+  const i = document.getElementById('refreshIcon');
+  i.className = on ? 'spin' : ''; i.textContent = '↻';
+}
+function renderSkeleton() {
+  const rows = Array(6).fill(0).map(() => `
+    <div class="skeleton-row">
+      <div class="sk-info"><div class="skel sk-t"></div><div class="skel sk-n"></div><div class="skel sk-n" style="width:110px"></div></div>
+      <div class="sk-grp"><div class="skel sk-btn"></div><div class="skel sk-btn"></div><div class="skel sk-btn"></div></div>
+    </div>`).join('');
+  document.getElementById('matchList').innerHTML = `<div class="skeleton-card">${rows}</div>`;
+  document.getElementById('loadMoreBox').innerHTML = '';
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   渲染：联赛 Tabs
+═══════════════════════════════════════════════════════════════ */
+function renderLeagueTabs() {
+  const counts = { ALL: _matches.length };
+  for (const m of _matches) counts[m.league] = (counts[m.league] || 0) + 1;
+
+  const leagues = ['ALL', ...Object.keys(counts).filter(k => k !== 'ALL')
+    .sort((a,b) => counts[b] - counts[a] || a.localeCompare(b))];
+
+  document.getElementById('leagueTabs').innerHTML = leagues.map(l => {
+    if (l === 'ALL') return `<div class="tab${_curLeague==='ALL'?' active':''}" onclick="switchLeague('ALL')">
+      <span>全部</span><span class="tab-count">${counts.ALL}</span></div>`;
+    const i = leagueInfo(l);
+    return `<div class="tab${_curLeague===l?' active':''}" onclick="switchLeague('${esc(l)}')">
+      <span class="tab-flag">${i.flag}</span><span>${i.short}</span>
+      <span class="tab-count">${counts[l]}</span></div>`;
+  }).join('');
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   渲染：赛事列表（首页只显示胜平负）
+═══════════════════════════════════════════════════════════════ */
+function renderMatchList() {
+  const list = _curLeague === 'ALL' ? _matches : _matches.filter(m => m.league === _curLeague);
+
+  if (!list.length) {
+    document.getElementById('matchList').innerHTML =
+      `<div class="empty"><div class="empty-icon">📭</div><div class="empty-txt">该联赛暂无赛事</div></div>`;
+    renderLoadMore(); return;
+  }
+
+  const groups = {}, order = [];
+  for (const m of list) {
+    if (!groups[m.league]) { groups[m.league] = []; order.push(m.league); }
+    groups[m.league].push(m);
+  }
+  order.sort((a,b) => Math.min(...groups[a].map(m=>m.ms||9e15)) - Math.min(...groups[b].map(m=>m.ms||9e15)));
+
+  let html = '';
+  if (_isDemo) {
+    html += `<div class="alert alert-warn">⚠️ <strong>演示数据</strong> — 未能获取真实赔率（API 受限或该时段无盘口），点击「刷新」可重试。</div>`;
+  }
+
+  for (const league of order) {
+    const i = leagueInfo(league);
+    const arr = groups[league].slice().sort((a,b) => (a.ms||0) - (b.ms||0));
+    const col = !!_collapsed[league];
+
+    html += `<div class="league-section${col?' collapsed':''}">
+      <div class="league-header" onclick="toggleLeague('${esc(league)}')">
+        <div class="league-header-left">
+          <span class="league-flag">${i.flag}</span>
+          <span class="league-title">${i.cn || league}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <span class="league-meta">${arr.length} 场</span>
+          <span class="league-toggle">∧</span>
+        </div>
+      </div>
+      <div class="league-body">`;
+
+    let lastDk = null;
+    for (const m of arr) {
+      const d = m.ms ? new Date(m.ms) : null;
+      const dk = fmtDateKey(d);
+      if (dk !== lastDk) { html += `<div class="date-row">${dk}</div>`; lastDk = dk; }
+
+      const ml = pickML(m.markets);
+      const o  = ml?.odds?.[0] || null;
+      const hn = teamCN(m.home), an = teamCN(m.away);
+      const hc = badgeColor(m.home || 'H'), ac = badgeColor(m.away || 'A');
+
+      const oddsHtml = o ? `
+        <div class="odds-market-label">胜平负</div>
+        <div class="odds-row">
+          <button class="odds-btn"><span class="odds-btn-label">${hn}</span><span class="odds-btn-val">${fmtOdd(o.home)}</span></button>
+          <button class="odds-btn"><span class="odds-btn-label">平局</span><span class="odds-btn-val">${fmtOdd(o.draw)}</span></button>
+          <button class="odds-btn"><span class="odds-btn-label">${an}</span><span class="odds-btn-val">${fmtOdd(o.away)}</span></button>
+        </div>` : `
+        <div class="odds-market-label">胜平负</div>
+        <div class="odds-locked">🔒 暂无赔率</div>`;
+
+      const nBets = m.bets || countBets(m.markets);
+
+      html += `<div class="match-row">
+        <div class="match-info">
+          <div class="match-time">
+            ${!_isDemo ? '<span class="live-dot"></span>' : ''}
+            <span>${fmtRowTime(d)}</span>
+            <span class="match-tag">SGM</span>
+          </div>
+          <div class="team-line"><span class="team-badge" style="background:${hc}">${(hn||'H').slice(0,1)}</span><span class="team-name">${hn}</span></div>
+          <div class="team-line"><span class="team-badge" style="background:${ac}">${(an||'A').slice(0,1)}</span><span class="team-name">${an}</span></div>
+        </div>
+        <div class="odds-wrap">${oddsHtml}</div>
+        <div class="more-btn" onclick="openDetail('${esc(m.id)}')" title="查看全部盘口（不消耗 API 调用）">+${nBets}</div>
+      </div>`;
+    }
+    html += `</div></div>`;
+  }
+
+  document.getElementById('matchList').innerHTML = html;
+  renderLoadMore();
+}
+
+function renderLoadMore() {
+  const box = document.getElementById('loadMoreBox');
+  if (_isDemo || !_pending.length) { box.innerHTML = ''; return; }
+  const next = Math.min(BATCH_SIZE, _pending.length);
+  const ok = canCall(1);
+  box.innerHTML = `<div class="load-more-wrap">
+    <button class="load-more-btn" onclick="loadMore()" ${ok?'':'disabled'}>
+      <span>＋ 加载更多 ${next} 场</span>
+      <span class="load-more-cost">${ok ? '消耗 1 次调用' : '已达上限'}</span>
+    </button>
+  </div>`;
+}
+
+function toggleLeague(l) { _collapsed[l] = !_collapsed[l]; renderMatchList(); }
+function switchLeague(l) {
+  _curLeague = l; renderLeagueTabs(); renderMatchList();
+  window.scrollTo({ top: 0, behavior:'smooth' });
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   首页加载
+   缓存命中 = 0 次；否则 events(1) + odds/multi(1) = 2 次
+═══════════════════════════════════════════════════════════════ */
+/* 优先展示的联赛关键词（命中的排前面） */
+const PREFER = [
+  'j.league','j-league','premier league','laliga','la liga','serie a','bundesliga',
+  'ligue 1','eredivisie','liga portugal','primeira','champions league','europa league',
+  'conference league','k league','super league','mls','brasileiro','primera',
+  'championship','efl cup','fa cup','pro league','superliga','allsvenskan','eliteserien',
+];
+/* 排除的联赛关键词（低质量/覆盖差） */
+const EXCLUDE = [ 'ncaa', 'women', 'u19', 'u20', 'u21', 'u23', 'youth', 'amateur', 'reserve' ];
+
+function scoreLeague(name) {
+  const n = (name || '').toLowerCase();
+  if (EXCLUDE.some(k => n.includes(k))) return -1;
+  for (let i = 0; i < PREFER.length; i++) if (n.includes(PREFER[i])) return 1000 - i;
+  return 1;
+}
+
+async function loadHome(force = false) {
+  updateApiUI();
+
+  if (!force) {
+    const c = loadCache();
+    if (c) {
+      _matches = c.matches || []; _pending = c.pending || [];
+      _isDemo = c.isDemo; _loadedTs = c.ts;
+      renderLeagueTabs(); renderMatchList();
+      const mins = Math.floor((Date.now() - c.ts) / 60000);
+      setAlert('info', `💾 已使用本地缓存，<strong>本次未消耗任何 API 调用</strong>。缓存有效期 30 分钟，需要最新赔率请点右上角「刷新」。`);
+      setStatus('s-ok', `💾 本地缓存 · ${_matches.length} 场 · 消耗 0 次调用`,
+        `缓存于 ${new Date(c.ts).toLocaleTimeString('zh-CN')}（${mins} 分钟前）`);
+      return;
+    }
+  }
+
+  if (!canCall(2)) {
+    setAlert('error', `🚫 本小时调用已接近上限（${apiCount()}/${HOURLY_LIMIT}），已暂停请求以保护配额。`);
+    let raw = null; try { raw = JSON.parse(localStorage.getItem(LS_HOME) || 'null'); } catch {}
+    if (raw?.matches?.length) {
+      _matches = raw.matches; _pending = raw.pending || []; _isDemo = raw.isDemo;
+      renderLeagueTabs(); renderMatchList();
+      setStatus('s-warn', '⚠️ 已达上限，显示过期缓存', new Date(raw.ts).toLocaleTimeString('zh-CN'));
+    }
+    return;
+  }
+
+  setBusy(true); setAlert('', ''); renderSkeleton();
+  document.getElementById('leagueTabs').innerHTML = '';
+
+  try {
+    /* ① 赛事列表（1 次） */
+    const ej = await apiFetch(`${BASE}/events?apiKey=${API_KEY}&sport=football`);
+    const all = Array.isArray(ej) ? ej : (ej.data || []);
+
+    /* 本地过滤：未开赛 + 未来时间 + 联赛评分 */
+    const now = Date.now();
+    const cand = [];
+    for (const e of all) {
+      const st = String(e.status || '').toLowerCase();
+      if (['settled','finished','canceled','cancelled','postponed','abandoned'].includes(st)) continue;
+      const d = parseDate(e.date || e.commence_time);
+      if (!d || d.getTime() < now - 3600000) continue;   // 允许刚开赛 1 小时内
+      const lg = e.league?.name || '';
+      const sc = scoreLeague(lg);
+      if (sc < 0) continue;
+      cand.push({ e, d, sc });
+    }
+
+    /* 排序：联赛评分降序 → 时间升序 */
+    cand.sort((a,b) => b.sc - a.sc || a.d - b.d);
+
+    if (!cand.length) throw { code:'NODATA' };
+
+    /* 组装待加载队列（轻量字段） */
+    const queue = cand.map(({ e, d }) => ({
+      id: String(e.id),
+      league: e.league?.name || '未知联赛',
+      ms: d.getTime(),
+      home: e.home || '主队',
+      away: e.away || '客队',
+    }));
+
+    /* ② 取第一批赔率（1 次） */
+    const first = queue.slice(0, BATCH_SIZE);
+    _pending = queue.slice(BATCH_SIZE, BATCH_SIZE * 12);   // 最多保留 120 场待加载
+
+    const loaded = await fetchOddsBatch(first);
+
+    if (!loaded.length) {
+      /* 第一批全无赔率 → 再试第二批（仍在预算内） */
+      if (_pending.length && canCall(1)) {
+        const second = _pending.slice(0, BATCH_SIZE);
+        _pending = _pending.slice(BATCH_SIZE);
+        const l2 = await fetchOddsBatch(second);
+        if (!l2.length) throw { code:'NODATA' };
+        _matches = l2;
+      } else {
+        throw { code:'NODATA' };
+      }
+    } else {
+      _matches = loaded;
+    }
+
+    _isDemo = false; _loadedTs = Date.now();
+    saveCache();
+    renderLeagueTabs(); renderMatchList();
+    setAlert('info', `✅ 已获取真实赔率，本次消耗 <strong>2 次</strong> 调用。<br>· 30 分钟内重新打开页面 → <strong>0 次</strong><br>· 点击任意比赛的 <strong>+N</strong> 查看全部盘口 → <strong>0 次</strong>（数据已随首页一并取得）`);
+    setStatus('s-ok', `✅ 真实数据 · ${_matches.length} 场 · 本次消耗 2 次`, `更新于 ${new Date().toLocaleTimeString('zh-CN')}`);
+
+  } catch (err) {
+    if (err?.code === 'LIMIT') {
+      setAlert('error', `🚫 ${err.msg}，请稍后再试。`);
+      document.getElementById('matchList').innerHTML =
+        `<div class="empty"><div class="empty-icon">🚫</div><div class="empty-txt">已达本小时安全上限<br>请稍后刷新</div></div>`;
+      setStatus('s-err', '❌ 本地限流保护已触发', new Date().toLocaleTimeString('zh-CN'));
+    } else {
+      _matches = buildDemo(); _pending = []; _isDemo = true; _loadedTs = Date.now();
+      saveCache();
+      renderLeagueTabs(); renderMatchList();
+      const why = err?.code === 429 ? 'API 配额已用尽（429）'
+                : err?.code === 'NODATA' ? '当前时段该数据源无可用盘口'
+                : `请求异常（${err?.code || '网络错误'}）`;
+      setStatus('s-warn', `⚠️ ${why}，已切换演示数据`, new Date().toLocaleTimeString('zh-CN'));
+    }
+  } finally {
+    setBusy(false); updateApiUI();
+  }
+}
+
+/* 批量取赔率：1 次调用，最多 10 场 */
+async function fetchOddsBatch(items) {
+  if (!items.length) return [];
+  const ids = items.map(x => x.id).join(',');
+  const oj = await apiFetch(`${BASE}/odds/multi?apiKey=${API_KEY}&eventIds=${ids}&bookmakers=${BOOKMAKER}`);
+  const arr = Array.isArray(oj) ? oj : (oj.data || []);
+
+  const map = {};
+  for (const ev of arr) map[String(ev.id)] = ev;
+
+  const out = [];
+  for (const it of items) {
+    const ev = map[it.id];
+    if (!ev) continue;
+    const markets = parseAllMarkets(ev.bookmakers);
+    if (!pickML(markets)) continue;          // 无胜平负则跳过
+    out.push({
+      ...it,
+      league: ev.league?.name || it.league,
+      markets,
+      bets: countBets(markets),
+    });
+  }
+  return out;
+}
+
+/* 加载更多：1 次调用 */
+async function loadMore() {
+  if (!_pending.length) return;
+  const box = document.getElementById('loadMoreBox');
+  box.innerHTML = `<div class="load-more-wrap"><button class="load-more-btn" disabled><span class="spin">↻</span> 加载中…</button></div>`;
+
+  const batch = _pending.slice(0, BATCH_SIZE);
+  const rest  = _pending.slice(BATCH_SIZE);
+
+  try {
+    const loaded = await fetchOddsBatch(batch);
+    _pending = rest;
+    if (loaded.length) {
+      const seen = new Set(_matches.map(m => m.id));
+      for (const m of loaded) if (!seen.has(m.id)) _matches.push(m);
+      _loadedTs = Date.now();
+      saveCache();
+      renderLeagueTabs(); renderMatchList();
+      setStatus('s-ok', `✅ 已加载 ${_matches.length} 场 · 本次消耗 1 次调用`, `更新于 ${new Date().toLocaleTimeString('zh-CN')}`);
+    } else {
+      renderMatchList();
+      setStatus('s-warn', `⚠️ 这批 ${batch.length} 场均无盘口数据，已跳过`, new Date().toLocaleTimeString('zh-CN'));
+    }
+  } catch (err) {
+    _pending = rest;
+    renderMatchList();
+    const msg = err?.code === 'LIMIT' ? err.msg : `加载失败（${err?.code || '网络错误'}）`;
+    setStatus('s-err', `❌ ${msg}`, new Date().toLocaleTimeString('zh-CN'));
+  } finally {
+    updateApiUI();
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   二级详情页 —— 0 次 API 调用（数据来自首页批量结果）
+═══════════════════════════════════════════════════════════════ */
+function openDetail(id) {
+  const m = _matches.find(x => x.id === id);
+  if (!m) return;
+
+  const i = leagueInfo(m.league);
+  document.getElementById('dpLeague').textContent = `${i.flag}  ${i.cn || m.league}`;
+  document.getElementById('dpHome').textContent = teamCN(m.home);
+  document.getElementById('dpAway').textContent = teamCN(m.away);
+  document.getElementById('dpTime').innerHTML = `🕐 ${fmtRowTime(m.ms ? new Date(m.ms) : null)}`;
+
+  renderDetail(m);
+
+  document.getElementById('detailOverlay').classList.add('open');
+  document.getElementById('detailPanel').classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+function closeDetail() {
+  document.getElementById('detailOverlay').classList.remove('open');
+  document.getElementById('detailPanel').classList.remove('open');
+  document.body.style.overflow = '';
+}
+
+function renderDetail(m) {
+  const mk = m.markets || {};
+  const home = teamCN(m.home), away = teamCN(m.away);
+  let html = '';
+
+  /* ① 胜负平 */
+  const ml = pickML(mk);
+  if (ml) {
+    const o = ml.odds[0] || {};
+    html += block('blk1x2','胜负平',
+      `<div class="d-row">${dbtn(home,o.home)}${dbtn('平局',o.draw)}${dbtn(away,o.away)}</div>`);
+  }
+
+  /* ② 进球 大/小 */
+  const tot = mk['Totals'] || mk['Asian Totals'];
+  if (tot) {
+    const rows = tot.odds.slice(0,10).map(o => {
+      const h = o.hdp ?? o.total ?? '';
+      return `<div class="d-row">${dbtn(`大于 ${h}`, o.over)}${dbtn(`小于 ${h}`, o.under)}</div>`;
+    }).join('');
+    html += block('blkTot','进球 大/小', rows);
+  }
+
+  /* ③ 全场 - 让球 0-0 */
+  const sp = mk['Spread'] || mk['Asian Handicap'];
+  if (sp) {
+    const rows = sp.odds.slice(0,10).map(o => {
+      const h = o.hdp ?? o.handicap ?? '';
+      const hs = h === '' ? '' : (h > 0 ? `+${h}` : `${h}`);
+      const as = h === '' ? '' : ((-h) > 0 ? `+${-h}` : `${-h}`);
+      return `<div class="d-row">${dbtn(`${home} (${hs})`, o.home)}${dbtn(`${away} (${as})`, o.away)}</div>`;
+    }).join('');
+    html += block('blkSp','全场 - 让球 0-0', rows);
+  }
+
+  /* ④ 其他可用盘口（有就显示） */
+  const dnb = mk['Draw No Bet'];
+  if (dnb) {
+    const o = dnb.odds[0] || {};
+    html += block('blkDnb','让和返还（平局退款）',
+      `<div class="d-row">${dbtn(home,o.home)}${dbtn(away,o.away)}</div>`);
+  }
+  const btts = mk['Both Teams To Score'];
+  if (btts) {
+    const o = btts.odds[0] || {};
+    html += block('blkBtts','双方球队进球',
+      `<div class="d-row">${dbtn('是',o.yes)}${dbtn('否',o.no)}</div>`);
+  }
+  const dc = mk['Double Chance'];
+  if (dc) {
+    const valid = dc.odds.filter(o => parseFloat(o.odds ?? o.value ?? 0) > 0);
+    if (valid.length) {
+      html += block('blkDc','双重机会',
+        `<div class="d-row">${valid.map(o => dbtn(DC_LABEL[o.label] || o.label || '-', o.odds ?? o.value)).join('')}</div>`);
+    }
+  }
+
+  if (!html) html = `<div class="alert alert-warn">⚠️ 该场暂无可显示的盘口数据</div>`;
+
+  const bk = ml?.bk || tot?.bk || sp?.bk || BOOKMAKER;
+  const upd = _loadedTs ? new Date(_loadedTs).toLocaleTimeString('zh-CN') : '';
+  html += `<div class="dp-note">
+    数据源 ${bk}${upd ? ` · 获取于 ${upd}` : ''}<br>
+    ✓ 本页数据随首页一并取得，<strong>查看详情不消耗 API 调用</strong>
+  </div>`;
+
+  document.getElementById('dpBody').innerHTML = html;
+}
+
+function block(id, title, body) {
+  return `<div class="mkt-block" id="${id}">
+    <div class="mkt-block-header" onclick="document.getElementById('${id}').classList.toggle('collapsed')">
+      <span class="mkt-block-title">${title}</span><span class="mkt-block-toggle">∧</span>
+    </div>
+    <div class="mkt-block-body">${body}</div>
+  </div>`;
+}
+function dbtn(label, val) {
+  return `<button class="d-btn"><span class="d-btn-label">${label}</span><span class="d-btn-val">${fmtOdd(val)}</span></button>`;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   演示数据（0 次调用）
+═══════════════════════════════════════════════════════════════ */
+function buildDemo() {
+  const now = Date.now(), H = 3600000, D = 86400000;
+  const mk = (id, league, off, home, away, ml, spread, totals) => {
+    const markets = {
+      'ML': { bk:'Demo', odds:[{ home:String(ml[0]), draw:String(ml[1]), away:String(ml[2]) }] },
+      'Draw No Bet': { bk:'Demo', odds:[{ home:(ml[0]*0.72).toFixed(2), away:(ml[2]*0.72).toFixed(2) }] },
+      'Spread': { bk:'Demo', odds: spread.map(s => ({ hdp:s[0], home:String(s[1]), away:String(s[2]) })) },
+      'Totals': { bk:'Demo', odds: totals.map(t => ({ hdp:t[0], over:String(t[1]), under:String(t[2]) })) },
+      'Both Teams To Score': { bk:'Demo', odds:[{ yes:'1.85', no:'1.92' }] },
+    };
+    return { id, league, ms: now + off, home, away, markets, bets: countBets(markets) };
+  };
+  const SP_A = [[-1.5,2.40,1.51],[-1,2.12,1.65],[-0.5,1.83,1.91],[0,1.44,2.58],[0.5,1.30,3.20],[1,1.18,4.40]];
+  const SP_B = [[-0.5,2.85,1.42],[0,2.10,1.72],[0.5,1.55,2.42],[1,1.32,3.25]];
+  const TO_A = [[1.5,1.30,3.35],[2,1.52,2.45],[2.5,1.85,1.95],[3,2.40,1.58],[3.5,3.20,1.34]];
+  const TO_B = [[2,1.75,2.05],[2.5,1.65,2.20],[3,2.15,1.70],[3.5,2.90,1.40]];
+
+  return [
+    mk('d1','Japan - J.League', 6*H, 'Yokohama F Marinos','Kashima Antlers',[3.80,3.45,1.98], SP_B, TO_A),
+    mk('d2','Japan - J.League', 6.5*H, 'Gamba Osaka','Urawa Red Diamonds',[2.35,3.30,3.05], SP_A, TO_B),
+    mk('d3','Japan - J.League', 1*D, 'Kashiwa Reysol','Kawasaki Frontale',[1.59,3.85,5.80], SP_A, TO_A),
+    mk('d4','Japan - J.League', 1*D+2*H, 'Cerezo Osaka','Vissel Kobe',[2.60,3.20,2.70], SP_B, TO_B),
+    mk('d5','Japan - J.League 2', 1*D, 'Shimizu S-Pulse','Yokohama FC',[1.85,3.50,4.20], SP_A, TO_A),
+    mk('d6','Japan - J.League 2', 2*D, 'Vegalta Sendai','Oita Trinita',[2.20,3.15,3.40], SP_B, TO_B),
+    mk('d7','England - Premier League', 2*D, 'Manchester City','Arsenal',[2.10,3.40,3.50], SP_A, TO_A),
+    mk('d8','England - Premier League', 2*D+2*H, 'Liverpool','Chelsea',[1.75,3.60,4.50], SP_A, TO_A),
+    mk('d9','England - Premier League', 3*D, 'Tottenham Hotspur','Everton',[1.62,4.00,5.20], SP_B, TO_B),
+    mk('d10','Spain - LaLiga', 3*D, 'Real Madrid','Barcelona',[2.20,3.30,3.20], SP_A, TO_A),
+    mk('d11','Spain - LaLiga', 3*D+2*H, 'Atletico Madrid','Sevilla',[1.70,3.60,5.00], SP_B, TO_B),
+    mk('d12','Germany - Bundesliga', 3*D, 'Bayern Munich','Borussia Dortmund',[1.65,3.80,5.20], SP_A, TO_A),
+    mk('d13','Italy - Serie A', 4*D, 'Inter Milan','Juventus',[2.00,3.40,3.80], SP_A, TO_B),
+    mk('d14','France - Ligue 1', 4*D, 'Paris Saint-Germain','Marseille',[1.45,4.50,6.50], SP_A, TO_A),
+    mk('d15','International Clubs - UEFA Europa League, Qualification', 2*D, 'Shamrock Rovers','Ajax',[4.20,3.40,1.83], SP_B, TO_B),
+  ];
+}
+
+/* ══════════════════════════════════════════════════════════════
+   启动
+══════════════════════════════════════════════════════════════ */
+updateApiUI();
+loadHome(false);
+
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDetail(); });
+</script>
+</body>
+</html>
